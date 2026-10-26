@@ -336,6 +336,7 @@ mark { background: #6b5a1e; color: #ffe9a8; border-radius: 2px; }
       <div class="row" style="margin-top:10px">
         <div class="row">
           <button class="primary" onclick="downloadBulk()">Kompakt laden (empfohlen, ~25 MB, ideal für iPhone/Mobilgeräte)</button>
+          <button onclick="downloadPaged()">Mobil laden (iPhone-Modus: seitenweise, sofort nutzbar)</button>
           <button onclick="downloadBulk(true)">Vollversion laden (~80 MB, alle Drucke, nur für leistungsstarke Rechner)</button>
           <button onclick="deleteBulk()">Cache löschen</button>
         </div>
@@ -552,6 +553,44 @@ async function idbGet(k){
 }
 async function idbGetRaw(k){ const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("kv","readonly"); const rq = tx.objectStore("kv").get(k); rq.onsuccess = ()=>res(rq.result); rq.onerror = ()=>rej(rq.error); }); }
 async function idbDel(k){ const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("kv","readwrite"); tx.objectStore("kv").delete(k); tx.oncomplete = res; tx.onerror = ()=>rej(tx.error); }); }
+
+async function downloadPaged(){
+  // iPhone-Modus: Karten seitenweise über die Such-API laden.
+  // Schon nach ~20 Seiten (~3.500 Karten) sind Suche/Deckbau/Gegner nutzbar;
+  // der Rest lädt im Hintergrund weiter und wird laufend gespeichert.
+  const setStat = t => { $("bulkStatus").textContent = t; };
+  try{
+    const compact = [];
+    let page = 1, hasMore = true, got = 0;
+    setStat("iPhone-Modus: lade Karten seitenweise (Bildschirm anlassen)...");
+    while(hasMore){
+      const data = await jfetch("https://api.scryfall.com/cards/search?q=" + encodeURIComponent("game:paper") + "&unique=card&order=name&page=" + page);
+      (data.data||[]).forEach(c => compact.push(compactCard(c)));
+      got = compact.length; hasMore = !!data.has_more; page++;
+      setStat("Geladen: "+got.toLocaleString("de-DE")+" Karten (Seite "+page+")"+(got < 3600 ? "" : " \u2014 du kannst jetzt schon suchen/zaubern! Rest lädt weiter..."));
+      progress(Math.min(.95, got/34000));
+      // Zwischenstände sichern: alle 20 Seiten und ab Seite 20 jede Seite
+      if(got >= 3500){
+        cardDB = compact.slice();
+        await idbSet("cards", cardDB);
+        updateStatus();
+        if(got === 3500 || page % 20 === 0) toast("Zwischenstand: "+got.toLocaleString("de-DE")+" Karten verfügbar");
+      }
+      await new Promise(r=>setTimeout(r, 150)); // Ratelimit schonen
+    }
+    // Fertig: deutsche Namen ergänzen und final speichern
+    cardDB = compact.slice();
+    await idbSet("cards", cardDB);
+    await finishBulk(cardDB, setStat, false);
+  }catch(e){
+    // Abbruch ist unkritisch: bis hierher Geladenes bleibt gespeichert
+    if(cardDB && cardDB.length){
+      setStat("\u26a0 Ladevorgang bei "+cardDB.length.toLocaleString("de-DE")+" Karten unterbrochen ("+e.message+") \u2014 die Daten sind bereits nutzbar! Einfach später erneut starten, um den Rest zu laden.");
+    } else {
+      $("bulkStatus").innerHTML = "\u26a0 Fehler: "+esc(e.message);
+    }
+  }
+}
 
 async function finishBulk(compact, setStat, full){
   progress(.55);
