@@ -1,0 +1,1595 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MTG Studio — Karten, Regeln, Decks</title>
+<style>
+:root {
+  --bg: #12141a; --bg2: #1a1d26; --bg3: #232735; --panel: #1c2030;
+  --text: #e6e8ee; --muted: #9aa0b4; --accent: #c8a24a; --accent2: #7b6a33;
+  --w: #e8e6d8; --u: #3b82c4; --b: #4b4653; --r: #c4513b; --g: #3f9d6b;
+  --border: #33384a;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 15px; }
+h1 { font-size: 1.35em; } h2 { font-size: 1.15em; } h3 { font-size: 1em; color: var(--accent); }
+button { background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 14px; cursor: pointer; font-size: 14px; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent2); border-color: var(--accent); font-weight: 600; }
+button.danger { color: #e07a6a; }
+button.mini { padding: 3px 8px; font-size: 12px; border-radius: 4px; }
+input, select, textarea { background: var(--bg2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; font-size: 14px; font-family: inherit; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+a { color: #7ba7d4; }
+.hidden { display: none !important; }
+
+/* Header */
+#topbar { display: flex; align-items: center; gap: 14px; padding: 10px 18px; background: var(--bg2); border-bottom: 2px solid var(--accent2); flex-wrap: wrap; }
+#topbar h1 { letter-spacing: 1px; }
+#status { margin-left: auto; color: var(--muted); font-size: 13px; }
+nav#tabs { display: flex; gap: 4px; padding: 0 18px; background: var(--bg2); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+nav#tabs button { background: none; border: none; border-bottom: 3px solid transparent; border-radius: 0; padding: 10px 18px; font-size: 15px; color: var(--muted); }
+nav#tabs button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+
+main { padding: 16px 18px; max-width: 1600px; margin: 0 auto; }
+.tab { display: none; }
+.tab.active { display: block; }
+
+/* Layout helpers */
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+.panel h2 { margin-bottom: 10px; }
+.muted { color: var(--muted); font-size: 13px; }
+
+/* Card colors */
+.sym-w { color: #f5efdc; background:#55524a; } .sym-u { color: #aad4f5; background:#1a3a5c; }
+.sym-b { color: #c9bfca; background:#2e2433; } .sym-r { color: #f5bfae; background:#5c241a; }
+.sym-g { color: #bfe5c9; background:#1a4229; }
+.sym-c, .sym-generic { color: #cfcfcf; background:#3a3a3a; }
+.mana { display:inline-block; min-width: 17px; text-align:center; border-radius: 50%; padding: 1px 3px; font-size: 12px; font-weight: 700; margin: 0 1px; }
+
+/* Card results */
+#searchResults { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-top: 14px; }
+.cardTile { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 10px; cursor: pointer; transition: border-color .15s; position: relative; }
+.cardTile:hover { border-color: var(--accent); }
+.cardTile .cname { font-weight: 600; font-size: 14px; }
+.cardTile .ctype { color: var(--muted); font-size: 12px; margin: 3px 0; }
+.cardTile .cost { font-size: 12px; }
+.cardTile img { width: 100%; border-radius: 6px; margin-top: 8px; display: block; }
+.cardTile .addBtn { position: absolute; top: 8px; right: 8px; }
+.cardTile .pt { font-weight: 700; font-size: 13px; }
+.cardTile .oracle { font-size: 11.5px; color: #cdd2e0; margin-top: 6px; white-space: pre-wrap; max-height: 120px; overflow: hidden; }
+.settag { display:inline-block; font-size:10.5px; color: var(--muted); background: var(--bg3); border-radius: 4px; padding: 1px 5px; margin-right: 5px; }
+.rarity-common { color: #c9cdd8; } .rarity-uncommon { color: #b8c8e0; } .rarity-rare { color: #e8c766; } .rarity-mythic { color: #e8843c; }
+
+/* Modal */
+#modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+#modal.open { display: flex; }
+#modalBox { background: var(--panel); border: 1px solid var(--accent2); border-radius: 12px; max-width: 980px; width: 100%; max-height: 90vh; overflow-y: auto; padding: 20px; position: relative; }
+#modalClose { position: absolute; top: 10px; right: 12px; font-size: 20px; background: none; border: none; color: var(--muted); }
+#modalBox img.cardimg { max-width: 380px; width: 100%; border-radius: 10px; float: right; margin: 0 0 12px 16px; }
+.ruleRef { color: #7ba7d4; cursor: pointer; text-decoration: underline dotted; }
+
+/* Rules tab */
+#rulesBrowse { max-height: 70vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: var(--bg2); }
+.ruleChapter { font-weight: 700; margin-top: 10px; color: var(--accent); }
+.ruleItem { margin: 4px 0; padding-left: 8px; }
+.ruleNum { color: #7ba7d4; font-weight: 600; margin-right: 6px; }
+.ruleExample { color: var(--muted); font-style: italic; padding-left: 20px; }
+#ruleResultList .ruleItem { border-left: 2px solid var(--border); margin: 8px 0; padding: 6px 10px; background: var(--bg2); border-radius: 0 6px 6px 0; }
+mark { background: #6b5a1e; color: #ffe9a8; border-radius: 2px; }
+
+/* Deck builder */
+#deckList { border: 1px solid var(--border); border-radius: 8px; background: var(--bg2); padding: 10px; max-height: 62vh; overflow-y: auto; }
+.deckEntry { display: flex; gap: 8px; align-items: baseline; padding: 3px 4px; border-radius: 4px; }
+.deckEntry:hover { background: var(--bg3); }
+.deckEntry .qty { width: 30px; text-align: right; font-weight: 700; color: var(--accent); }
+.deckEntry .dn { flex: 1; cursor: pointer; }
+.deckEntry .dn:hover { text-decoration: underline; }
+.deckEntry .cost { font-size: 12px; }
+#deckStats table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+#deckStats td, #deckStats th { padding: 3px 6px; border-bottom: 1px solid var(--border); text-align: left; }
+#deckStats th { color: var(--muted); font-weight: 600; }
+.barchart { display: flex; align-items: flex-end; gap: 3px; height: 90px; }
+.barchart .bar { flex: 1; background: var(--accent2); border-top: 2px solid var(--accent); border-radius: 2px 2px 0 0; min-height: 1px; position: relative; }
+.barchart .bar span { position: absolute; bottom: -16px; left: 0; right: 0; text-align: center; font-size: 10px; color: var(--muted); }
+.curveWrap { padding-bottom: 20px; }
+.colorPip { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+
+/* Play test */
+#playArea { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.zone { border: 1px solid var(--border); border-radius: 8px; padding: 10px; min-height: 90px; background: var(--bg2); }
+.zone h3 { margin-bottom: 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
+.perm { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; margin: 4px 0; display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+.perm.tapped { transform: rotate(2deg); opacity: .75; }
+.perm .pname { cursor: pointer; }
+.perm .psub { color: var(--muted); font-size: 11px; }
+.perm .ppt { font-weight: 700; }
+#playLog { max-height: 40vh; overflow-y: auto; font-size: 13px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-family: ui-monospace, Consolas, monospace; }
+#playLog div { padding: 1px 0; border-bottom: 1px dotted #2a2e3e; }
+.handCard { width: 108px; flex-shrink: 0; cursor: pointer; border: 1px solid var(--border); border-radius: 6px; background: var(--bg3); padding: 4px; font-size: 11px; transition: transform .1s; }
+.handCard:hover { transform: translateY(-4px); border-color: var(--accent); }
+.handCard img { width: 100%; border-radius: 4px; display: block; }
+#handRow { display: flex; gap: 6px; overflow-x: auto; padding: 10px 4px; }
+#playStats { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+.stat { text-align: center; }
+.stat b { display: block; font-size: 22px; color: var(--accent); }
+.stat span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+.phaseBtns button { margin: 2px; }
+
+#progressbar { position: fixed; left: 0; top: 0; height: 3px; background: var(--accent); width: 0%; z-index: 200; transition: width .3s; }
+.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--bg3); border: 1px solid var(--accent); border-radius: 8px; padding: 10px 22px; z-index: 150; display: none; }
+@media (max-width: 800px) { #playArea { grid-template-columns: 1fr; } .grid2 { grid-template-columns: 1fr; } #modalBox img.cardimg { float: none; margin: 0 0 12px 0; } }
+</style>
+</head>
+<body>
+<div id="progressbar"></div>
+<div id="topbar">
+  <h1>🧙 MTG Studio</h1>
+  <span class="muted">Kartensuche · Regeln · Deckbau · Testspiel</span>
+  <span id="status"></span>
+</div>
+<nav id="tabs">
+  <button data-tab="search" class="active">🔍 Kartensuche</button>
+  <button data-tab="rules">📖 Regeln</button>
+  <button data-tab="decks">🃏 Deckbau</button>
+  <button data-tab="play">⚔️ Testspiel</button>
+  <button data-tab="data">💾 Daten</button>
+</nav>
+<main>
+<!-- ============ TAB: KARTENSUCHE ============ -->
+<section id="tab-search" class="tab active">
+  <div class="panel">
+    <h2>Kartensuche</h2>
+    <div class="row">
+      <input id="q" style="flex:1; min-width:220px" placeholder="Suche (Name, Kartentext, Scryfall-Syntax z.B. t:creature o:flying c>2)...">
+      <button class="primary" onclick="runSearch()">Suchen</button>
+    </div>
+    <details style="margin-top:10px">
+      <summary class="muted" style="cursor:pointer">Filter (alle Kriterien)</summary>
+      <div class="grid2" style="margin-top:10px">
+        <div class="row"><span style="width:110px">Farben</span>
+          <label><input type="checkbox" class="fcol" value="W"> <span class="sym-w mana">W</span></label>
+          <label><input type="checkbox" class="fcol" value="U"> <span class="sym-u mana">U</span></label>
+          <label><input type="checkbox" class="fcol" value="B"> <span class="sym-b mana">B</span></label>
+          <label><input type="checkbox" class="fcol" value="R"> <span class="sym-r mana">R</span></label>
+          <label><input type="checkbox" class="fcol" value="G"> <span class="sym-g mana">G</span></label>
+          <label><input type="checkbox" class="fcol" value="C"> farblos</label>
+          <select id="colMode"><option value="include">inklusive</option><option value="exact">exakt</option></select>
+        </div>
+        <div class="row"><span style="width:110px">Kartentyp</span>
+          <select id="fType"><option value="">alle</option><option>Creature</option><option>Artifact</option><option>Enchantment</option><option>Instant</option><option>Sorcery</option><option>Land</option><option>Planeswalker</option><option>Battle</option></select>
+          <input id="fSub" placeholder="Subtyp (z.B. Goblin)" style="flex:1">
+        </div>
+        <div class="row"><span style="width:110px">Mana-Wert</span>
+          <select id="mvOp"><option value="=">=</option><option value="&lt;=">&le;</option><option value="&gt;=">&ge;</option></select>
+          <input id="mvVal" type="number" min="0" style="width:70px">
+        </div>
+        <div class="row"><span style="width:110px">Stärke/Härte</span>
+          <input id="powVal" placeholder="Stärke" style="width:70px">
+          <input id="touVal" placeholder="Härte" style="width:70px">
+          <select id="ptOp"><option value="=">=</option><option value=">=">&ge;</option><option value="<=">&le;</option></select>
+        </div>
+        <div class="row"><span style="width:110px">Seltenheit</span>
+          <select id="fRar"><option value="">alle</option><option>common</option><option>uncommon</option><option>rare</option><option>mythic</option></select>
+        </div>
+        <div class="row"><span style="width:110px">Edition</span>
+          <input id="fSet" placeholder="z.B. MH3" style="flex:1">
+        </div>
+        <div class="row"><span style="width:110px">Format-Legalität</span>
+          <select id="fLeg"><option value="">alle</option><option value="standard">Standard</option><option value="pioneer">Pioneer</option><option value="modern">Modern</option><option value="legacy">Legacy</option><option value="vintage">Vintage</option><option value="commander">Commander</option><option value="pauper">Pauper</option><option value="brawl">Brawl</option><option value="historic">Historic</option></select>
+        </div>
+        <div class="row"><span style="width:110px">Text enthält</span>
+          <input id="fText" placeholder="Kartentext" style="flex:1">
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button onclick="runSearch()">Filter anwenden</button>
+        <button onclick="clearFilters()">Zurücksetzen</button>
+        <span class="muted">Hinweis: Nach dem Laden der Kartendaten (Tab 💾 Daten) werden auch <b>deutsche Kartennamen</b> gefunden (z.B. „Blitzschlag“). Live-Suche: englische Namen; mit `lang:de` direkt deutsche Ausgaben.</span>
+      </div>
+    </details>
+  </div>
+  <div id="searchResults"></div>
+  <div class="row" style="margin-top:14px">
+    <button id="moreBtn" class="hidden" onclick="pageMore()">Weitere Ergebnisse laden</button>
+    <span id="searchInfo" class="muted"></span>
+  </div>
+</section>
+
+<!-- ============ TAB: REGELN ============ -->
+<section id="tab-rules" class="tab">
+  <div class="panel">
+    <h2>Regel-Nachschlagewerk <span class="muted" id="rulesVersion"></span></h2>
+    <div class="row">
+      <input id="ruleQ" style="flex:1" placeholder="Regelnummer (z.B. 702.9) oder Volltextsuche (z.B. 'flying', 'mulligan', 'state-based')...">
+      <button class="primary" onclick="searchRules()">Nachschlagen</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <select id="ruleChapter" onchange="browseChapter()">
+        <option value="">Kapitel wählen...</option>
+      </select>
+      <span class="muted">Regeln laden sich beim ersten Start automatisch (ca. 1 MB) und werden gespeichert.</span>
+      <button onclick="loadRules(true)">Regeln neu laden</button>
+    </div>
+  </div>
+  <div class="grid2" style="margin-top:14px">
+    <div class="panel"><h2 id="rulesBrowseTitle">Inhaltsverzeichnis / Kapitel</h2><div id="rulesBrowse"></div></div>
+    <div class="panel"><h2>Suchergebnisse</h2><div id="ruleResultList" class="muted">Noch keine Suche.</div></div>
+  </div>
+</section>
+
+<!-- ============ TAB: DECKBAU ============ -->
+<section id="tab-decks" class="tab">
+  <div class="row" style="margin-bottom:12px">
+    <select id="deckSelect" onchange="loadDeckToUI()"></select>
+    <input id="newDeckName" placeholder="Neues Deck-Name">
+    <button class="primary" onclick="createDeck()">Deck anlegen</button>
+    <button onclick="renameDeck()">Umbenennen</button>
+    <button class="danger" onclick="deleteDeck()">Löschen</button>
+    <select id="deckFormat" onchange="setDeckFormat()">
+      <option value="constructed">Constructed (60, max. 4)</option>
+      <option value="commander">Commander (100, Singleton)</option>
+      <option value="limited">Limited (40)</option>
+      <option value="freeform">Frei</option>
+    </select>
+  </div>
+  <div class="grid2">
+    <div class="panel">
+      <h2>Deckliste</h2>
+      <div id="deckList" class="muted">Noch kein Deck gewählt.</div>
+      <div class="row" style="margin-top:10px">
+        <button onclick="openImportExport()">Import / Export</button>
+        <button onclick="startPlayTest()">⚔️ Testspiel starten</button>
+      </div>
+      <div id="deckErrors" style="color:#e07a6a; margin-top:8px; font-size:13px"></div>
+    </div>
+    <div class="panel">
+      <h2>Deck-Statistik</h2>
+      <div id="deckStats"><span class="muted">Noch kein Deck gewählt.</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ TAB: TESTSPIEL ============ -->
+<section id="tab-play" class="tab">
+  <div class="panel">
+    <div class="row">
+      <h2 style="flex:1" id="playDeckTitle">Kein Deck geladen</h2>
+      <button onclick="startPlayTest()">Neue Testpartie (7 Karten)</button>
+      <button onclick="mulligan()">Mulligan</button>
+      <button onclick="endPlay()">Beenden</button>
+    </div>
+    <div class="panel" style="margin-top:10px">
+      <h2>🤖 Gegner-Generator</h2>
+      <div class="row">
+        <span style="width:90px">Farben</span>
+        <label><input type="checkbox" class="oppCol" value="W" checked> <span class="mana sym-w">W</span></label>
+        <label><input type="checkbox" class="oppCol" value="U"> <span class="mana sym-u">U</span></label>
+        <label><input type="checkbox" class="oppCol" value="B"> <span class="mana sym-b">B</span></label>
+        <label><input type="checkbox" class="oppCol" value="R"> <span class="mana sym-r">R</span></label>
+        <label><input type="checkbox" class="oppCol" value="G" checked> <span class="mana sym-g">G</span></label>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <span style="width:90px">Legalität</span>
+        <select id="oppLegal">
+          <option value="standard">Standard</option>
+          <option value="pioneer">Pioneer</option>
+          <option value="modern" selected>Modern</option>
+          <option value="legacy">Legacy</option>
+          <option value="commander">Commander</option>
+          <option value="pauper">Pauper</option>
+          <option value="">alle Karten</option>
+        </select>
+        <span style="width:90px">Strategie</span>
+        <select id="oppStrategy">
+          <option value="aggro" selected>Aggro (schnelle Kreaturen)</option>
+          <option value="midrange">Midrange (ausgewogen)</option>
+          <option value="control">Control (Abwehr + späte Bomben)</option>
+        </select>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="primary" onclick="startPlayTest(true)">⚔️ Testspiel MIT Gegner starten</button>
+        <span class="muted">Der Gegner zieht automatisch — Länder legen, zaubern, angreifen. Du blockst.</span>
+      </div>
+    </div>
+    <div id="playStats" style="margin-top:10px">
+      <div class="stat"><b id="stLife">20</b><span>Leben</span></div>
+      <div class="stat"><b id="stTurn">1</b><span>Zug</span></div>
+      <div class="stat"><b id="stMana">0</b><span>Mana</span></div>
+      <div class="stat"><b id="stHand">0</b><span>Hand</span></div>
+      <div class="stat"><b id="stLib">0</b><span>Bibliothek</span></div>
+      <div class="stat"><b id="stLands">0</b><span>Länder</span></div>
+      <div class="stat"><b id="stPhase" style="font-size:16px;padding-top:6px">—</b><span>Phase</span></div>
+      <div class="stat"><b id="stOppLife">—</b><span>🤖 Gegner-Leben</span></div>
+      <div style="flex:1"></div>
+      <span id="manaPips"></span>
+    </div>
+    <div class="row phaseBtns" style="margin-top:8px">
+      <button onclick="nextPhase()" id="phaseBtn" class="primary">Beginne Zug (Verwahrungsphase)</button>
+    </div>
+  </div>
+  <div id="playArea" style="margin-top:14px">
+    <div>
+      <div class="zone"><h3>Hand <span class="muted">(klicke eine Karte zum Spielen)</span></h3><div id="handRow"></div></div>
+      <div class="zone" style="margin-top:10px"><h3>Schlachtfeld <span class="muted">(klicke Permanente für Aktionen)</span></h3><div id="battlefield"></div></div>
+      <div class="zone" style="margin-top:10px"><h3>Friedhof</h3><div id="graveyard" class="muted"></div></div>
+    </div>
+    <div>
+      <div class="zone"><h3>🤖 Gegner-Hand</h3><div id="oppHand" class="muted"></div></div>
+      <div class="zone" style="margin-top:10px"><h3>🤖 Gegner: Schlachtfeld</h3><div id="oppBattlefield"></div></div>
+      <div class="zone" style="margin-top:10px"><h3>🤖 Gegner: Friedhof</h3><div id="oppGraveyard" class="muted"></div></div>
+      <div class="zone" style="margin-top:10px"><h3>Protokoll</h3><div id="playLog"></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ TAB: DATEN ============ -->
+<section id="tab-data" class="tab">
+  <div class="grid2">
+    <div class="panel">
+      <h2>Kartendaten (Scryfall)</h2>
+      <p class="muted" style="margin:8px 0">Der komplette Kartendatensatz (~100.000 Karten) wird einmalig geladen und im Browser gespeichert. Danach funktioniert die Kartensuche nach allen Kriterien auch offline. Alternativ: Live-Suche ohne Bulk-Download.</p>
+      <div id="bulkStatus" class="muted"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" onclick="downloadBulk()">Kartendaten jetzt laden (empfohlen)</button>
+        <button onclick="deleteBulk()">Cache löschen</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Regeln (Comprehensive Rules)</h2>
+      <p class="muted" style="margin:8px 0">Regeln werden beim ersten Start von der offiziellen Quelle geladen und lokal gespeichert. Stand: siehe Regel-Tab.</p>
+      <div id="rulesStatus" class="muted"></div>
+      <div class="row" style="margin-top:10px">
+        <select id="rulesVersionSelect"></select>
+        <button class="primary" onclick="loadRules(true, document.getElementById('rulesVersionSelect').value)">Regeln laden</button>
+      </div>
+      <p class="muted" style="margin-top:10px">Eigene Regeldatei (TXT)? <input type="file" id="rulesFile" accept=".txt,.md" onchange="importRulesFile(this)"></p>
+    </div>
+    <div class="panel">
+      <h2>Decks sichern</h2>
+      <p class="muted" style="margin:8px 0">Decks liegen im Browser-Speicher (localStorage). Hier kannst du alle Decks als JSON sichern oder wiederherstellen.</p>
+      <div class="row">
+        <button onclick="exportAllDecks()">Alle Decks exportieren</button>
+        <input type="file" id="decksFile" accept=".json" onchange="importAllDecks(this)">
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Info</h2>
+      <p class="muted">MTG Studio · Kartendaten &copy; Scryfall (scryfall.com) · Regeln &copy; Wizards of the Coast. Nutzung gemäß Scryfall-Nutzungsbedingungen (nicht-offizielle Fan-Anwendung). Kartensuche folgt Regeln gem. Comprehensive Rules; das Testspiel ist ein Simulator zum Decktesten („Goldfischen") und bildet keine vollständige Regel-Engine ab.</p>
+    </div>
+  </div>
+</section>
+</main>
+
+<div id="modal"><div id="modalBox"><button id="modalClose" onclick="closeModal()">&times;</button><div id="modalContent"></div></div></div>
+<div class="toast" id="toast"></div>
+<script>
+"use strict";
+/* ================= Helpers ================= */
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const jsAttr = s => String(s ?? "").replace(/\\/g,"\\\\").replace(/'/g,"\\'").replace(/"/g,"&quot;").replace(/[<>]/g, "");
+let toastTimer = null;
+function toast(msg){ const t = $("toast"); t.textContent = msg; t.style.display = "block"; clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.style.display="none", 2600); }
+function progress(p){ $("progressbar").style.width = (p*100)+"%"; if(p>=1) setTimeout(()=>progress(0), 500); }
+async function jfetch(url){ const r = await fetch(url); if(!r.ok) throw new Error("HTTP "+r.status+" bei "+url); return r.json(); }
+
+/* Mana symbols */
+function manaHTML(cost){
+  if(!cost) return "";
+  return cost.replace(/\{([^}]+)\}/g, (m, s) => {
+    const map = {W:"sym-w",U:"sym-u",B:"sym-b",R:"sym-r",G:"sym-g"};
+    let cls = map[s.charAt(0)];
+    if(!cls){ if(s === "T") return '<span class="mana sym-c">↷</span>'; if(s === "Q") return '<span class="mana sym-c">↶</span>'; cls = "sym-generic"; }
+    return '<span class="mana '+cls+'">'+esc(s)+'</span>';
+  });
+}
+
+/* ================= Scryfall search ================= */
+let searchResultCache = [];
+let searchPage = 1;
+
+function buildQuery(){
+  const parts = [];
+  const q = $("q").value.trim();
+  if(q) parts.push(q);
+  const cols = [...document.querySelectorAll(".fcol:checked")].map(c=>c.value);
+  if(cols.length){
+    const mode = $("colMode").value === "exact" ? "c=" : "c>=";
+    parts.push(mode + cols.join(""));
+  }
+  const t = $("fType").value; if(t) parts.push("t:"+t);
+  const sub = $("fSub").value.trim(); if(sub) parts.push("t:"+sub);
+  const mv = $("mvVal").value; if(mv !== "") parts.push("mv"+$("mvOp").value.replace("&lt;=","<=").replace("&gt;=",">=")+mv);
+  const pow = $("powVal").value.trim(); if(pow) parts.push("pow"+$("ptOp").value+pow);
+  const tou = $("touVal").value.trim(); if(tou) parts.push("tou"+$("ptOp").value+tou);
+  const rar = $("fRar").value; if(rar) parts.push("r:"+rar);
+  const set = $("fSet").value.trim(); if(set) parts.push("e:"+set);
+  const leg = $("fLeg").value; if(leg) parts.push("f:"+leg);
+  const txt = $("fText").value.trim(); if(txt) parts.push("o:"+txt);
+  return parts.join(" ");
+}
+
+let inBulkMode = false;
+async function runSearch(){
+  const query = buildQuery();
+  if(!query){ toast("Bitte Suchbegriff oder Filter angeben."); return; }
+  $("searchResults").innerHTML = '<p class="muted">Suche läuft…</p>';
+  try{
+    if(cardDB.length){ // bulk mode
+      const res = bulkSearch(query, 1);
+      searchResultCache = res.cards; searchPage = 1; inBulkMode = true;
+      renderCards(res.cards);
+      $("searchInfo").textContent = res.cards.length + " von " + res.total + " Treffern (Seite 1)";
+      $("moreBtn").classList.toggle("hidden", res.cards.length >= res.total);
+    } else {
+      const data = await jfetch("https://api.scryfall.com/cards/search?q=" + encodeURIComponent(query) + "&unique=prints&order=name&page=1");
+      searchResultCache = data.data; searchPage = 1; inBulkMode = false;
+      renderCards(data.data);
+      $("searchInfo").textContent = data.data.length + " von " + data.total_cards + " Treffern";
+      $("moreBtn").classList.toggle("hidden", !data.has_more);
+    }
+  }catch(e){
+    const obj = e.message.match(/HTTP 404/);
+    $("searchResults").innerHTML = obj ? '<p class="muted">Keine Karten gefunden.</p>' : '<p class="muted" style="color:#e07a6a">Fehler: '+esc(e.message)+'</p>';
+    $("searchInfo").textContent = "";
+    $("moreBtn").classList.add("hidden");
+  }
+}
+
+async function pageMore(){
+  const query = buildQuery();
+  try{
+    if(inBulkMode){
+      searchPage++;
+      const res = bulkSearch(query, searchPage);
+      searchResultCache = searchResultCache.concat(res.cards);
+      renderCards(searchResultCache);
+      $("searchInfo").textContent = searchResultCache.length + " von " + res.total + " Treffern (Seite "+searchPage+")";
+      $("moreBtn").classList.toggle("hidden", searchResultCache.length >= res.total);
+    } else {
+      searchPage++;
+      const data = await jfetch("https://api.scryfall.com/cards/search?q=" + encodeURIComponent(query) + "&unique=prints&order=name&page="+searchPage);
+      searchResultCache = searchResultCache.concat(data.data);
+      renderCards(searchResultCache);
+      $("moreBtn").classList.toggle("hidden", !data.has_more);
+    }
+  }catch(e){ toast("Keine weiteren Ergebnisse."); $("moreBtn").classList.add("hidden"); }
+}
+
+function renderCards(cards){
+  $("searchResults").innerHTML = cards.map(c => {
+    const img = c.image_uris ? c.image_uris.normal : (c.card_faces && c.card_faces[0].image_uris ? c.card_faces[0].image_uris.normal : "");
+    const cost = c.mana_cost || (c.card_faces ? (c.card_faces.map(f=>f.mana_cost).filter(Boolean).join("//")) : "");
+    const oracle = c.oracle_text || (c.card_faces ? c.card_faces.map(f=>f.oracle_text).filter(Boolean).join("\n---\n") : "");
+    const pt = (c.power !== undefined ? c.power+"/"+c.toughness : (c.loyalty !== undefined ? "["+c.loyalty+" Loyalty]" : (c.defense !== undefined ? "["+c.defense+" Defense]":"")));
+    return '<div class="cardTile" onclick="showCard(\''+c.id+'\')">'
+      + '<div class="cname">'+esc(c.name)+(c.de_name && c.de_name !== c.name ? ' <span class="muted" style="font-weight:400">('+esc(c.de_name)+')</span>' : '')+'</div>'
+      + '<div class="ctype"><span class="settag">'+esc(c.set)+'</span><span class="rarity-'+(c.rarity||"common")+'">'+esc(c.rarity||"")+'</span> '+esc(c.type_line||"")+'</div>'
+      + '<div class="cost">'+manaHTML(cost)+' <span class="pt">'+pt+'</span></div>'
+      + (oracle ? '<div class="oracle">'+esc(oracle)+'</div>' : "")
+      + (img ? '<img loading="lazy" src="'+img+'" alt="'+esc(c.name)+'">' : "")
+      + '</div>';
+  }).join("");
+  progress(1);
+}
+
+function showCard(id){
+  const c = searchResultCache.find(x=>x.id===id);
+  if(!c) return;
+  const img = c.image_uris ? c.image_uris.large : (c.card_faces && c.card_faces[0].image_uris ? c.card_faces[0].image_uris.large : "");
+  let faces = "";
+  if(c.card_faces && isModalDFC(c)){
+    faces = '<p class="muted" style="margin:8px 0">Modal-DFC — beide Seiten eigenständig spielbar (Regel 712.5a):</p><div class="row" style="align-items:flex-start">'
+      + c.card_faces.map(f =>
+        '<div style="flex:1;min-width:220px">'
+        + '<h3>'+esc(f.name)+'</h3><p class="muted">'+manaHTML(f.mana_cost)+'</p><p>'+esc(f.type_line||"")+'</p>'
+        + '<p style="margin:6px 0">'+esc(f.oracle_text||"")+'</p>'
+        + (f.image_uris ? '<img src="'+f.image_uris.large+'" style="width:100%;max-width:300px;border-radius:8px;margin-top:6px">' : "")
+        + '</div>').join("") + '</div>';
+  } else if(c.card_faces){
+    faces = c.card_faces.map(f =>
+      '<h3>'+esc(f.name)+'</h3><p class="muted">'+manaHTML(f.mana_cost)+'</p><p>'+esc(f.type_line||"")+'</p><p style="margin:6px 0">'+esc(f.oracle_text||"")+'</p>'
+    ).join("<hr>");
+  }
+  $("modalContent").innerHTML =
+    (img ? '<img class="cardimg" src="'+img+'">' : "")
+    + '<h2>'+esc(c.name)+'</h2>'
+    + '<p class="muted">'+manaHTML(c.mana_cost || "")+' · '+esc(c.type_line||"")+'</p>'
+    + (c.oracle_text ? '<p style="margin:8px 0">'+esc(c.oracle_text)+'</p>' : faces)
+    + '<p class="muted" style="margin:8px 0">'+(c.set_name||"")+' · '+esc(c.rarity||"")+' · '+esc(c.artist||"")+'</p>'
+    + '<div class="row" style="margin-top:12px">'
+    + '<select id="addToDeckSel">'+allDecks().map(d=>'<option value="'+d.id+'">'+esc(d.name)+'</option>').join("")+'</select>'
+    + '<input type="number" id="addQty" value="1" min="1" max="99" style="width:60px">'
+    + '<button class="primary" onclick="addToDeckFromModal(\''+c.id+'\')">Ins Deck</button>'
+    + '<a href="'+c.scryfall_uri+'" target="_blank">Scryfall ↗</a>'
+    + '</div>';
+  $("modal").classList.add("open");
+}
+function closeModal(){ $("modal").classList.remove("open"); }
+function addToDeckFromModal(id){
+  const c = searchResultCache.find(x=>x.id===id);
+  const deckId = $("addToDeckSel").value, qty = parseInt($("addQty").value)||1;
+  addCardToDeck(deckId, canonicalCard(c), qty);
+}
+$("modal").addEventListener("click", e => { if(e.target.id === "modal") closeModal(); });
+
+function clearFilters(){
+  document.querySelectorAll(".fcol").forEach(c=>c.checked=false);
+  ["fType","fSub","mvVal","powVal","touVal","fRar","fSet","fLeg","fText","mvOp"].forEach(i=>{ if($(i).value) $(i).value = ""; });
+}
+
+/* ================= Bulk card DB (IndexedDB) ================= */
+let cardDB = [];
+const SCRYFALL_BULK = "https://api.scryfall.com/bulk-data/default-cards"; // all prints incl. all criteria
+function idb(){ return new Promise((res, rej) => { const r = indexedDB.open("mtgstudio", 1);
+  r.onupgradeneeded = e => { const db = e.target.result; if(!db.objectStoreNames.contains("kv")) db.createObjectStore("kv"); };
+  r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+async function idbSet(k, v){ const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("kv","readwrite"); tx.objectStore("kv").put(v, k); tx.oncomplete = res; tx.onerror = ()=>rej(tx.error); }); }
+async function idbGet(k){ const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("kv","readonly"); const rq = tx.objectStore("kv").get(k); rq.onsuccess = ()=>res(rq.result); rq.onerror = ()=>rej(rq.error); }); }
+async function idbDel(k){ const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("kv","readwrite"); tx.objectStore("kv").delete(k); tx.oncomplete = res; tx.onerror = ()=>rej(tx.error); }); }
+
+async function downloadBulk(){
+  try{
+    progress(.02); $("bulkStatus").textContent = "Frage Scryfall nach Download-URI...";
+    const meta = await jfetch(SCRYFALL_BULK);
+    progress(.1); $("bulkStatus").textContent = "Lade "+meta.name+" ("+(meta.compressed_size/1e6).toFixed(1)+" MB)… (das dauert 1–3 Minuten)";
+    let resp;
+    try{
+      resp = await fetch(meta.download_uri);
+      if(!resp.ok) throw new Error("HTTP "+resp.status);
+    }catch(e1){
+      // Fallback: alternativer Bulk-Endpunkt
+      $("bulkStatus").textContent = "Erster Download fehlgeschlagen ("+e1.message+") — versuche alternativen Weg (Oracle Cards)…";
+      const meta2 = await jfetch("https://api.scryfall.com/bulk-data/oracle-cards");
+      resp = await fetch(meta2.download_uri);
+      if(!resp.ok) throw new Error("HTTP "+resp.status);
+    }
+    const total = +resp.headers.get("content-length") || 0;
+    const reader = resp.body.getReader();
+    let chunks = [], recv = 0;
+    while(true){
+      const {done, value} = await reader.read();
+      if(done) break;
+      chunks.push(value); recv += value.length;
+      if(total) progress(.1 + .5 * recv/total);
+      $("bulkStatus").textContent = "Lade… "+(recv/1e6).toFixed(1)+" MB";
+    }
+    progress(.65);
+    const blob = new Blob(chunks);
+    const text = await blob.text();
+    progress(.8);
+    const cards = JSON.parse(text);
+    progress(.55);
+    $("bulkStatus").textContent = "Kartendaten geladen — lade zusätzlich deutsche Kartennamen (de)...";
+    // German names: fetch de bulk and merge printed_name into English cards by oracle_id/name
+    let deNames = {};
+    try{
+      const deMeta = await jfetch("https://api.scryfall.com/bulk-data/de-cards");
+      const respDe = await fetch(deMeta.download_uri);
+      const deCards = JSON.parse(await respDe.text());
+      deCards.forEach(dc => { if(dc.printed_name) deNames[dc.oracle_id] = dc.printed_name; });
+    }catch(e){ /* German names optional */ }
+    progress(.8);
+    const compact = cards.map(c => {
+      const cc = compactCard(c);
+      if(!cc.de_name && deNames[c.oracle_id]) cc.de_name = deNames[c.oracle_id];
+      if(cc.de_name) cc.full += " " + cc.de_name;
+      return cc;
+    });
+    progress(.9);
+    await idbSet("cards", compact);
+    cardDB = compact;
+    progress(1);
+    $("bulkStatus").textContent = "✓ "+cardDB.length.toLocaleString("de-DE")+" Karten gespeichert"+(Object.keys(deNames).length ? " (inkl. "+Object.keys(deNames).length.toLocaleString("de-DE")+" deutscher Namen)" : "")+".";
+    updateStatus();
+    toast("Kartendaten geladen: "+cardDB.length+" Karten");
+  }catch(e){
+    $("bulkStatus").innerHTML = "⚠ Download fehlgeschlagen: "+esc(e.message)+"<br><span class=\"muted\">Mögliche Ursachen: (1) Datei wurde per Doppelklick als <b>file://</b> geöffnet — manche Browser blockieren dann Downloads (App über einen lokalen Server öffnen, z.B. mit <code>python3 -m http.server</code>, oder die Datei auf einen Web-Space/GitHub Pages legen). (2) Internetverbindung/Proxy blockiert api.scryfall.com oder c2.scryfall.com. (3) Adblocker/Tracking-Schutz aktiv — für diese Seite deaktivieren. <br>Die Kartensuche funktioniert trotzdem per Live-Suche; der Gegner-Generator benötigt jedoch die geladenen Kartendaten.</span>";
+  }
+}
+
+function compactCard(c){
+  const faces = c.card_faces ? c.card_faces.map(f => ({
+    name: f.name, mana_cost: f.mana_cost || "", type_line: f.type_line || "",
+    oracle: f.oracle_text || "", pow: f.power, tou: f.toughness, loyalty: f.loyalty,
+    img: f.image_uris ? f.image_uris.normal : ""
+  })) : null;
+  // DFC: Mana-Kosten stehen bei zweiseitigen Karten auf den Faces (Regel 712.4a) — Vorderseite übernehmen
+  const dfcCost = (!c.mana_cost && faces && faces[0] && faces[0].mana_cost) ? faces[0].mana_cost : c.mana_cost;
+  const dfcType = c.type_line || (faces && faces[0] ? faces[0].type_line : "");
+  const dfcPow = c.power !== undefined ? c.power : (faces && faces[0] ? faces[0].pow : undefined);
+  const dfcTou = c.toughness !== undefined ? c.toughness : (faces && faces[0] ? faces[0].tou : undefined);
+  return {
+    id: c.id, name: c.name, set: c.set, set_name: c.set_name, rarity: c.rarity,
+    cmc: c.cmc, mana_cost: dfcCost, type_line: dfcType,
+    oracle: c.oracle_text || (c.card_faces ? c.card_faces.map(f=>f.oracle_text).filter(Boolean).join(" // ") : ""),
+    colors: c.colors || [], colorIdentity: c.color_identity || [],
+    pow: dfcPow, tou: dfcTou, loyalty: c.loyalty,
+    keywords: c.keywords || [], legal: c.legalities || {},
+    img: c.image_uris ? c.image_uris.normal : (c.card_faces && c.card_faces[0].image_uris ? c.card_faces[0].image_uris.normal : ""),
+    uri: c.scryfall_uri, lang: c.lang, released: c.released_at,
+    layout: c.layout || "normal",
+    de_name: (c.printed_name && c.lang === "de") ? c.printed_name : "",
+    faces,
+    full: c.name + " " + (c.type_line||"") + " " + (c.oracle_text||"") + " " + c.set_name
+      + " " + (c.printed_name || "") + " " + (c.printed_type_line || "")
+      + (c.card_faces ? " " + c.card_faces.map(f=>f.name+" "+(f.type_line||"")).join(" ") : "")
+  };
+}
+function canonicalCard(c){
+  const f0 = c.card_faces ? c.card_faces[0] : null;
+  const dfcCost = (!c.mana_cost && f0 && f0.mana_cost) ? f0.mana_cost : (c.mana_cost || "");
+  const dfcType = c.type_line || (f0 ? f0.type_line : "") || "";
+  const dfcPow = c.power !== undefined ? c.power : (f0 ? f0.power : undefined);
+  const dfcTou = c.toughness !== undefined ? c.toughness : (f0 ? f0.toughness : undefined);
+  return { id: c.id, name: c.name, set: c.set, mana_cost: dfcCost, cmc: c.cmc || 0,
+    type_line: dfcType, oracle: c.oracle_text || (f0 ? f0.oracle_text : "") || "", colors: c.colors || [],
+    img: c.image_uris ? c.image_uris.normal : (f0 && f0.image_uris ? f0.image_uris.normal : ""),
+    pow: dfcPow, tou: dfcTou, loyalty: c.loyalty, uri: c.scryfall_uri,
+    layout: c.layout || "normal",
+    de_name: c.printed_name || "",
+    faces: c.card_faces ? c.card_faces.map(f => ({
+      name: f.name, mana_cost: f.mana_cost || "", type_line: f.type_line || "",
+      oracle: f.oracle_text || "", pow: f.power, tou: f.toughness, loyalty: f.loyalty,
+      img: f.image_uris ? f.image_uris.normal : ""
+    })) : null };
+}
+/* Modal-DFC = both sides independently castable (rule 712.5a); transforming DFCs (rule 712.14) are not */
+function isModalDFC(c){ return c && (c.layout === "modal_dfc" || c.layout === "double_faced_mdfc" || String(c.layout||"").includes("modal")); }
+
+/* Bulk offline search: supports name:, o:, t:, c>=/c=, mv, pow, tou, r:, e:, f:, plain text */
+function bulkSearch(query, page){
+  const PER = 40;
+  const terms = query.match(/-?"[^"]*"|\S+/g) || [];
+  const cards = [];
+  function val(rx){ const m = query.match(rx); return m ? m[1].toLowerCase() : null; }
+  const fColM = query.match(/\bc(>=|<=|=|>|<)?\s*([wubrgc]+)\b/i), fCol = fColM ? [fColM[0], fColM[1]||">=", fColM[2]] : null;
+  const fType = val(/\bt:([\w-]+)/i), fO = val(/\bo:([\w-]+)/i),
+        fR = val(/\br:(\w+)/i), fE = val(/\be:([\w-]+)/i), fF = val(/\bf:(\w+)/i);
+  const fMv = query.match(/\bmv([<>=]+)\s*(\d+)/i), fPow = query.match(/\bpow\s*(>=|<=|=)\s*([\d*]+|x)/i), fTou = query.match(/\btou\s*(>=|<=|=)\s*([\d*]+|x)/i);
+  let freeText = query
+    .replace(/\b(t|o|c|mv|pow|tou)\s*(:|=|>=|<=|>|<)\s*[\w-]+/gi, " ")
+    .replace(/\b(t|o|c)\s*:\s*[\w-]+/gi, " ")
+    .replace(/\bc\s*[><=]?\s*[wubrgc]+\b/gi, " ")
+    .replace(/\b(r|e|f)\s*:\s*[\w-]+/gi, " ")
+    .replace(/\bmv\s*[<>=]+\s*\d+/gi, " ")
+    .replace(/\bpow\s*(>=|<=|=)\s*[\dx*]+/gi, " ")
+    .replace(/\btou\s*(>=|<=|=)\s*[\dx*]+/gi, " ")
+    .replace(/[<>=]+/g, " ")
+    .trim().toLowerCase();
+  let total = 0;
+  for(const c of cardDB){
+    let ok = true;
+    if(freeText && !c.full.toLowerCase().includes(freeText)) ok = false;
+    if(ok && fType && !c.type_line.toLowerCase().includes(fType)) ok = false;
+    if(ok && fO && !c.oracle.toLowerCase().includes(fO)) ok = false;
+    if(ok && fR && c.rarity !== fR) ok = false;
+    if(ok && fE && c.set.toLowerCase() !== fE) ok = false;
+    if(ok && fF && !(c.legal && c.legal[fF] === "legal")) ok = false;
+    if(ok && fCol){
+      const ci = fCol[2].split("").map(x=>x.toUpperCase());
+      if(fCol[1] === "="){ if(JSON.stringify(c.colors.slice().sort()) !== JSON.stringify(ci.slice().sort())) ok = false; }
+      else { if(!ci.every(col => c.colorIdentity.includes(col))) ok = false; }
+    }
+    if(ok && fMv){
+      const n = parseFloat(fMv[2]), cmc = c.cmc;
+      if(fMv[1] === ">=" ? !(cmc >= n) : fMv[1] === "<=" ? !(cmc <= n) : cmc !== n) ok = false;
+    }
+    if(ok && fPow){
+      const p = c.pow === undefined ? null : (c.pow === "*" ? Infinity : parseFloat(c.pow));
+      if(p === null) ok = false;
+      else { const n = parseFloat(fPow[2]); if(fPow[1] === ">=" ? !(p >= n) : fPow[1] === "<=" ? !(p <= n) : p !== n) ok = false; }
+    }
+    if(ok && fTou){
+      const t = c.tou === undefined ? null : (c.tou === "*" ? Infinity : parseFloat(c.tou));
+      if(t === null) ok = false;
+      else { const n = parseFloat(fTou[2]); if(fTou[1] === ">=" ? !(t >= n) : fTou[1] === "<=" ? !(t <= n) : t !== n) ok = false; }
+    }
+    if(ok){ total++; if(cards.length < page*PER && total > (page-1)*PER) cards.push(toFull(c)); }
+  }
+  return { cards, total };
+}
+function toFull(c){ // re-add fields expected by renderers
+  return { id: c.id, name: c.name, set: c.set, set_name: c.set_name, rarity: c.rarity, cmc: c.cmc,
+    mana_cost: c.mana_cost, type_line: c.type_line, oracle_text: c.oracle, colors: c.colors,
+    power: c.pow, toughness: c.tou, loyalty: c.loyalty, image_uris: c.img ? { normal: c.img, large: c.img.replace("/normal/","/large/") } : null,
+    legalities: c.legal, scryfall_uri: c.uri,
+    layout: c.layout, de_name: c.de_name, card_faces: c.faces };
+}
+
+async function deleteBulk(){ await idbDel("cards"); cardDB = []; $("bulkStatus").textContent = "Cache gelöscht."; updateStatus(); }
+</script>
+<script>
+"use strict";
+/* ================= Rules engine ================= */
+/* Rules source: official Wizards TXT via CORS-enabled GitHub mirror (pit142857/mtg-cr) */
+const RULES_BASE = "https://raw.githubusercontent.com/pit142857/mtg-cr/8351b94ffcc295e3e427d57b84e2a245dfa0810e/Comprehensive%20Rules/";
+const RULES_VERSIONS = ["CR-2026-04-17.txt","CR-2026-02-27.txt","CR-2026-01-16.txt","CR-2025-11-14.txt","CR-2025-09-19.txt"];
+let rules = { version: null, chapters: [], rules: [], glossary: [] };
+
+function parseRules(txt){
+  const out = { chapters: [], rules: [], glossary: [] };
+  const lines = txt.replace(/\r/g, "").split("\n");
+  let chapter = null;
+  const chapHead = /^(\d)\.\s+([A-Z][^\n]*)$/;
+  const ruleNum = /^(\d{3})\.(\d+)([a-z]?)\.?\s*(.*)$/;
+  const subHead = /^(\d{3})\.\s+([A-Z][^\n]{2,60})$/;
+  const glossTerm = /^[A-Z][A-Za-z'’()\-]*( [A-Z][A-Za-z'’()\-]*)*$/;
+  for(let ln of lines){
+    ln = ln.trim();
+    if(!ln) continue;
+    if(ln === "Glossary"){
+      if(!out.chapters.some(c=>c.num==="G")){ chapter = { num: "G", title: "Glossary", subs: [] }; out.chapters.push(chapter); }
+      else chapter = out.chapters.find(c=>c.num==="G");
+      continue;
+    }
+    if(ln === "Credits" || ln.startsWith("These rules are effective")) continue;
+    const ch = ln.match(chapHead);
+    if(ch && !/^\d/.test(ch[2])){
+      const existing = out.chapters.find(c => c.num === ch[1] && c.title === ch[2]);
+      if(existing){ chapter = existing; }
+      else { chapter = { num: ch[1], title: ch[2], subs: [] }; out.chapters.push(chapter); }
+      continue;
+    }
+    const sh = ln.match(subHead);
+    if(sh && chapter && !/^\d{3}\.\d/.test(ln) && !(chapter.subs.some(s=>s.num===sh[1]))){
+      chapter.subs.push({ num: sh[1], title: sh[2] });
+      continue;
+    }
+    const r = ln.match(ruleNum);
+    if(r){
+      out.rules.push({ num: r[1]+"."+r[2]+(r[3]||""), text: r[4]||"", chapter: chapter ? chapter.num : null });
+      continue;
+    }
+    // glossary mode: collect definitions
+    if(chapter && chapter.num === "G"){
+      if(glossTerm.test(ln) && ln.length < 60 && !/^\d/.test(ln)){
+        out.glossary.push({ term: ln, def: "" });
+      } else if(out.glossary.length){
+        const last = out.glossary[out.glossary.length-1];
+        last.def += (last.def ? " " : "") + ln;
+      }
+      continue;
+    }
+    // continuation line of previous rule (hard-wrapped TXT)
+    if(out.rules.length){
+      const prev = out.rules[out.rules.length-1];
+      if(/^\d/.test(ln) && chapter === null) continue; // TOC remnant
+      prev.text += " " + ln;
+    }
+  }
+  // dedupe rules (TOC may create none, but safety)
+  const seen = new Set();
+  out.rules = out.rules.filter(r => !seen.has(r.num) && seen.add(r.num));
+  return out;
+}
+
+async function loadRules(force, version){
+  version = version || "CR-2026-04-17.txt";
+  try{
+    let txt = null;
+    if(!force){
+      const cached = localStorage.getItem("mtg_rules");
+      const cachedV = localStorage.getItem("mtg_rules_version");
+      if(cached && cachedV === version){ txt = cached; }
+    }
+    if(!txt){
+      progress(.3);
+      const r = await fetch(RULES_BASE + encodeURIComponent(version));
+      if(!r.ok) throw new Error("HTTP "+r.status);
+      txt = await r.text();
+      progress(.7);
+      try{ localStorage.setItem("mtg_rules", txt); localStorage.setItem("mtg_rules_version", version); }catch(e){ /* quota: keep in memory */ }
+      progress(1);
+    }
+    const parsed = parseRules(txt);
+    rules = { version: version.replace("CR-","").replace(".txt",""), ...parsed };
+    $("rulesVersion").textContent = "(Stand: " + rules.version + ")";
+    $("rulesStatus").textContent = "✓ Regeln geladen: " + rules.rules.length + " Regeln, " + rules.chapters.length + " Kapitel, " + rules.glossary.length + " Glossar-Einträge (Stand " + rules.version + ")";
+    fillChapterSelect(); browseChapter();
+    updateStatus();
+  }catch(e){
+    $("rulesStatus").textContent = "Fehler beim Laden: " + e.message + " — Offline? Regeln ggf. per Datei importieren (Daten-Tab).";
+    const cached = localStorage.getItem("mtg_rules");
+    if(cached){ const p = parseRules(cached); rules = { version: localStorage.getItem("mtg_rules_version")||"?", ...p }; fillChapterSelect(); browseChapter(); }
+  }
+}
+
+function fillChapterSelect(){
+  const sel = $("ruleChapter");
+  sel.innerHTML = '<option value="">Kapitel wählen...</option>' + rules.chapters.map(c =>
+    '<option value="'+c.num+'">'+c.num+". "+esc(c.title)+'</option>').join("");
+  $("rulesVersionSelect").innerHTML = RULES_VERSIONS.map(v=>'<option value="'+v+'">'+v.replace("CR-","").replace(".txt","")+'</option>').join("");
+}
+
+function browseChapter(){
+  const num = $("ruleChapter").value;
+  const box = $("rulesBrowse");
+  if(!num){ // TOC
+    box.innerHTML = rules.chapters.map(c => '<div class="ruleChapter" style="cursor:pointer" onclick="$(\'ruleChapter\').value=\''+c.num+'\';browseChapter()">'+c.num+". "+esc(c.title)+'</div>'
+      + '<div class="muted" style="padding-left:12px">'+c.subs.slice(0,100).map(s=>esc(s.num+" "+s.title)).join(" · ")+'</div>').join("");
+    return;
+  }
+  const ch = rules.chapters.find(c=>c.num === num);
+  $("rulesBrowseTitle").textContent = ch.num + ". " + ch.title;
+  box.innerHTML = rules.rules.filter(r => r.chapter === num).map(r =>
+    '<div class="ruleItem"><span class="ruleNum">'+r.num+'</span>'+esc(r.text).replace(/\n/g,"<br>")+'</div>').join("");
+}
+
+function searchRules(){
+  const q = $("ruleQ").value.trim();
+  if(!q) return;
+  const box = $("ruleResultList");
+  const numMatch = q.match(/^(\d{3})(?:\.(\d+)([a-z]?))?(?:\.(\d+)([a-z]?))?$/);
+  if(numMatch && (numMatch[2] !== undefined)){
+    // Build prefix: "702.9" matches 702.9, 702.9a, 702.9b...; "702.9a" matches only 702.9a
+    let prefix;
+    if(numMatch[4] !== undefined) prefix = numMatch[1]+"."+numMatch[2]+(numMatch[3]||"")+"."+numMatch[4]+(numMatch[5]||"");
+    else prefix = numMatch[1]+"."+numMatch[2]+(numMatch[3]||"");
+    const finalList = rules.rules.filter(r => r.num === prefix || (r.num.startsWith(prefix) && /[a-z.]/.test(r.num.charAt(prefix.length) || "")) );
+    box.innerHTML = finalList.length ? finalList.map(highlightRule(q)).join("") : '<p class="muted">Regel nicht gefunden.</p>';
+    return;
+  }
+  // full text search
+  const needle = q.toLowerCase();
+  const hits = rules.rules.filter(r => r.text.toLowerCase().includes(needle)).slice(0, 200);
+  const gloss = rules.glossary.filter(g => g.term.toLowerCase().includes(needle) || g.def.toLowerCase().includes(needle)).slice(0, 30);
+  let html = hits.map(r => {
+    const re = new RegExp("("+q.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+")","gi");
+    return '<div class="ruleItem"><span class="ruleNum">'+r.num+'</span>'+esc(r.text).replace(re,"<mark>$1</mark>").replace(/\n/g,"<br>")+'</div>';
+  }).join("");
+  if(gloss.length) html += "<h3 style='margin-top:14px'>Glossar</h3>" + gloss.map(g =>
+    '<div class="ruleItem"><span class="ruleNum">'+esc(g.term)+'</span><br>'+esc(g.def).replace(new RegExp("("+q.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+")","gi"),"<mark>$1</mark>").replace(/\n/g,"<br>")+'</div>').join("");
+  box.innerHTML = html || '<p class="muted">Keine Treffer für „'+esc(q)+'".</p>';
+}
+
+function highlightRule(q){ return r =>
+  '<div class="ruleItem"><span class="ruleNum">'+r.num+'</span>'+esc(r.text).replace(/\n/g,"<br>")+'</div>'; }
+
+function importRulesFile(inp){
+  const f = inp.files[0]; if(!f) return;
+  const reader = new FileReader();
+  reader.onload = async () => {
+    const txt = reader.result;
+    try{ localStorage.setItem("mtg_rules", txt); localStorage.setItem("mtg_rules_version", "eigene Datei"); }catch(e){}
+    const p = parseRules(txt);
+    rules = { version: "eigene Datei ("+f.name+")", ...p };
+    $("rulesVersion").textContent = "(Stand: eigene Datei)";
+    $("rulesStatus").textContent = "✓ Importiert: " + rules.rules.length + " Regeln aus " + f.name;
+    fillChapterSelect(); browseChapter();
+    toast("Regeln importiert: "+rules.rules.length+" Regeln");
+  };
+  reader.readAsText(f);
+}
+</script>
+<script>
+"use strict";
+/* ================= Decks ================= */
+function allDecks(){ try{ return JSON.parse(localStorage.getItem("mtg_decks")||"[]"); }catch(e){ return []; } }
+function saveDecks(decks){ localStorage.setItem("mtg_decks", JSON.stringify(decks)); refreshDeckSelect(); }
+let currentDeckId = null;
+
+function refreshDeckSelect(){
+  const decks = allDecks();
+  if(decks.length && !decks.some(x=>x.id===currentDeckId)) currentDeckId = decks[0].id;
+  $("deckSelect").innerHTML = decks.length ? decks.map(d=>'<option value="'+d.id+'"'+(d.id===currentDeckId?" selected":"")+'>'+esc(d.name)+' ('+(d.cards||[]).reduce((s,c)=>s+c.qty,0)+')</option>').join("") : '<option value="">— kein Deck —</option>';
+}
+function createDeck(){
+  const name = $("newDeckName").value.trim() || ("Deck " + (allDecks().length+1));
+  const decks = allDecks();
+  const d = { id: "d"+Date.now(), name, format: $("deckFormat").value, cards: [] };
+  decks.push(d); saveDecks(decks); currentDeckId = d.id;
+  $("newDeckName").value = "";
+  loadDeckToUI(); toast("Deck „"+name+"“ angelegt");
+}
+function renameDeck(){
+  const d = allDecks().find(x=>x.id===currentDeckId); if(!d) return;
+  const n = prompt("Neuer Name:", d.name); if(n){ d.name = n; saveDecks(allDecks()); loadDeckToUI(); }
+}
+function deleteDeck(){
+  const d = allDecks().find(x=>x.id===currentDeckId); if(!d) return;
+  if(!confirm("Deck „"+d.name+"“ wirklich löschen?")) return;
+  saveDecks(allDecks().filter(x=>x.id!==currentDeckId)); currentDeckId = null; loadDeckToUI();
+}
+function setDeckFormat(){ const d = allDecks().find(x=>x.id===currentDeckId); if(d){ d.format = $("deckFormat").value; saveDecks(allDecks()); validateDeck(); } }
+function loadDeckToUI(){
+  const selVal = $("deckSelect").value;
+  if(selVal && allDecks().some(x=>x.id===selVal)) currentDeckId = selVal;
+  refreshDeckSelect();
+  const d = allDecks().find(x=>x.id===currentDeckId);
+  if(!d){ $("deckList").innerHTML = '<span class="muted">Noch kein Deck gewählt.</span>'; $("deckStats").innerHTML = ""; return; }
+  $("deckFormat").value = d.format || "constructed";
+  const main = d.cards.filter(c=>!c.sideboard), side = d.cards.filter(c=>c.sideboard);
+  const html = listGroup(main) + (side.length ? "<h3 style='margin-top:12px'>Sideboard</h3>" + listGroup(side) : "");
+  $("deckList").innerHTML = html || '<span class="muted">Leer — Karten über die Kartensuche hinzufügen.</span>';
+  $("deckList").onclick = deckEntryClick;
+  renderDeckStats(d); validateDeck();
+}
+function listGroup(cards){
+  const sorted = cards.slice().sort((a,b)=> (a.type_line||"").includes("Land") ? 1 : (b.type_line||"").includes("Land") ? -1 : a.cmc-b.cmc || a.name.localeCompare(b.name));
+  // group: Creatures, Spells (by type), Lands
+  const groups = { "Kreaturen": [], "Zauber": [], "Länder": [], "Andere": [] };
+  for(const c of sorted){
+    const t = c.type_line || "";
+    if(t.includes("Creature")) groups["Kreaturen"].push(c);
+    else if(t.includes("Land")) groups["Länder"].push(c);
+    else if(t.includes("Instant")||t.includes("Sorcery")) groups["Zauber"].push(c);
+    else groups["Andere"].push(c);
+  }
+  let html = "";
+  for(const [g, list] of Object.entries(groups)){
+    if(!list.length) continue;
+    html += "<h3>"+g+" ("+list.reduce((s,c)=>s+c.qty,0)+")</h3>";
+    html += list.map(c => '<div class="deckEntry" data-name="'+esc(c.name)+'"><span class="qty">'+c.qty+'</span><span class="dn" data-act="info">'+esc(c.name)+'</span><span class="cost">'+manaHTML(c.mana_cost)+'</span><button class="mini danger" data-act="dec">−</button><button class="mini" data-act="inc">+</button></div>').join("");
+  }
+  return html;
+}
+function deckEntryClick(e){
+  const el = e.target.closest(".deckEntry"); if(!el) return;
+  const name = el.dataset.name;
+  const actEl = e.target.closest("[data-act]"); const act = actEl ? actEl.dataset.act : null;
+  if(act === "info") deckCardInfo(name);
+  else if(act === "dec") removeFromDeck(name);
+  else if(act === "inc") addCardToDeck(currentDeckId, findDeckCard(name), 1);
+}
+function findDeckCard(name){ const d = allDecks().find(x=>x.id===currentDeckId); const c = d.cards.find(c=>c.name===name); return c; }
+
+function addCardToDeck(deckId, card, qty){
+  if(!card){ toast("Karte nicht gefunden."); return; }
+  const decks = allDecks();
+  const d = decks.find(x=>x.id===deckId); if(!d){ toast("Kein Deck gewählt."); return; }
+  d.cards = d.cards || [];
+  const ex = d.cards.find(c => c.name === card.name);
+  if(ex) ex.qty += qty;
+  else d.cards.push({ ...card, qty });
+  saveDecks(decks); loadDeckToUI();
+  toast(qty+"× "+card.name+" hinzugefügt");
+}
+function removeFromDeck(name){
+  const decks = allDecks(); const d = decks.find(x=>x.id===currentDeckId); if(!d) return;
+  const i = d.cards.findIndex(c=>c.name===name);
+  if(i >= 0){ d.cards[i].qty--; if(d.cards[i].qty <= 0) d.cards.splice(i,1); }
+  saveDecks(decks); loadDeckToUI();
+}
+function deckCardInfo(name){
+  const d = allDecks().find(x=>x.id===currentDeckId); if(!d) return;
+  const c = (d.cards||[]).find(c=>c.name===name); if(!c) return;
+  let html = '<h2>'+esc(c.name)+'</h2><p class="muted">'+manaHTML(c.mana_cost)+'</p><p>'+esc(c.type_line||"")+'</p>'
+    + (c.oracle ? '<p style="margin:8px 0">'+esc(c.oracle)+'</p>' : "");
+  // Modal-DFC: beide Seiten zeigen (Rückseite eigenständig spielbar, Regel 712.5a). Transform-DFCs: nur Vorderseite (Regel 712.14 — Rückseite nur durch Transformieren erreichbar).
+  if(c.faces && c.faces.length > 1 && isModalDFC(c)){
+    html += '<hr style="margin:12px 0"><p class="muted">Modal-DFC — beide Seiten eigenständig spielbar (Regel 712.5a):</p>';
+    html += '<div class="row" style="align-items:flex-start">';
+    for(const f of c.faces){
+      html += '<div style="flex:1;min-width:220px">'
+        + '<h3>'+esc(f.name)+'</h3>'
+        + '<p class="muted">'+manaHTML(f.mana_cost)+'</p>'
+        + '<p>'+esc(f.type_line||"")+'</p>'
+        + (f.oracle ? '<p style="margin:6px 0;font-size:13px">'+esc(f.oracle)+'</p>' : "")
+        + (f.img ? '<img src="'+f.img.replace("/normal/","/large/")+'" style="width:100%;max-width:300px;border-radius:8px;margin-top:6px">' : "")
+        + '</div>';
+    }
+    html += '</div>';
+  } else {
+    if(c.faces && c.faces.length > 1) html += '<p class="muted" style="margin-top:8px">Zweiseitige Karte (Transform): im Spiel zeigt nur die Vorderseite die Eigenschaften; Rückseite nur durch Transformieren (Regel 712.14).</p>';
+    html += (c.img ? '<img src="'+c.img.replace("/normal/","/large/")+'" style="max-width:300px;border-radius:8px;margin-top:8px">' : "");
+  }
+  $("modalContent").innerHTML = html;
+  $("modal").classList.add("open");
+}
+
+function renderDeckStats(d){
+  const cards = d.cards.flatMap(c => Array(c.qty).fill(c));
+  if(!cards.length){ $("deckStats").innerHTML = '<span class="muted">Leer.</span>'; return; }
+  const lands = cards.filter(c=>(c.type_line||"").includes("Land")).length;
+  const creatures = cards.filter(c=>(c.type_line||"").includes("Creature")).length;
+  const avgMv = (cards.reduce((s,c)=>s+(c.cmc||0),0)/cards.length).toFixed(2);
+  // mana curve
+  const curve = {}; cards.forEach(c=>{ const m = Math.min(Math.floor(c.cmc||0),7); curve[m]=(curve[m]||0)+1; });
+  const maxC = Math.max(...Object.values(curve), 1);
+  const curveHTML = [0,1,2,3,4,5,6,7].map(m =>
+    '<div class="bar" style="height:'+(curve[m]||0)/maxC*100+'%" title="'+(curve[m]||0)+' Karten"><span>'+(m===7?"7+":m)+'</span></div>').join("");
+  // color pips from color identity
+  const pipCount = {};
+  cards.forEach(c=>{ (c.colors && c.colors.length ? c.colors : (c.type_line||"").includes("Land") && c.mana_cost ? [] : (c.colors||[])).forEach(col=>pipCount[col]=(pipCount[col]||0)+1);
+    if(c.mana_cost){ const ms = c.mana_cost.match(/\{[WUBRG]\}/g)||[]; ms.forEach(m=>{const col=m[1]; pipCount[col]=(pipCount[col]||0)+1;}); } });
+  const pipColors = {W:"#e8e6d8",U:"#3b82c4",B:"#7a6f8a",R:"#c4513b",G:"#3f9d6b"};
+  const pips = Object.entries(pipCount).sort((a,b)=>b[1]-a[1]).map(([col,n]) =>
+    '<span class="colorPip" style="background:'+pipColors[col]+'"></span>'+col+":"+n).join(" &nbsp; ");
+  $("deckStats").innerHTML =
+    '<table><tr><th>Karten</th><td>'+cards.length+'</td><th>Länder</th><td>'+lands+' ('+Math.round(lands/cards.length*100)+'%)</td></tr>'
+    + '<tr><th>Kreaturen</th><td>'+creatures+'</td><th>Ø Mana-Wert</th><td>'+avgMv+'</td></tr></table>'
+    + '<h3 style="margin-top:12px">Mana-Kurve</h3><div class="curveWrap"><div class="barchart">'+curveHTML+'</div></div>'
+    + '<h3 style="margin-top:8px">Farben (Mana-Symbole)</h3><p>'+ (pips||"—") +'</p>';
+}
+
+function validateDeck(){
+  const d = allDecks().find(x=>x.id===currentDeckId); if(!d){ $("deckErrors").textContent=""; return; }
+  const errs = [];
+  const total = d.cards.reduce((s,c)=>s+c.qty,0);
+  const fmt = d.format || "constructed";
+  if(fmt === "constructed"){
+    if(total < 60) errs.push("Unter 60 Karten ("+total+"). (Regel 100.2a)");
+    const counts = {};
+    d.cards.forEach(c => { if(!(c.type_line||"").includes("Basic Land")) counts[c.name] = (counts[c.name]||0)+c.qty; });
+    Object.entries(counts).forEach(([n, q]) => { if(q > 4) errs.push("Mehr als 4× „"+n+"“ ("+q+"). (Regel 100.2a)"); });
+  } else if(fmt === "commander"){
+    if(total !== 100) errs.push("Commander-Decks haben genau 100 Karten ("+total+"). (Regel 903.5)");
+    const counts = {};
+    d.cards.forEach(c => counts[c.name] = (counts[c.name]||0)+c.qty);
+    Object.entries(counts).forEach(([n,q]) => { if(q > 1) errs.push("Commander ist Singleton: 2× „"+n+"“."); });
+  } else if(fmt === "limited"){
+    if(total < 40) errs.push("Unter 40 Karten ("+total+"). (Regel 100.2b)");
+  }
+  $("deckErrors").innerHTML = errs.length ? errs.map(esc).join("<br>") : (total ? "✓ Deck ist regelkonform ("+total+" Karten)." : "");
+}
+
+function openImportExport(){
+  const d = allDecks().find(x=>x.id===currentDeckId); if(!d){ toast("Kein Deck gewählt."); return; }
+  const list = d.cards.map(c => c.qty+" "+c.name + (c.set ? " ("+c.set+")" : "")).join("\n");
+  $("modalContent").innerHTML = '<h2>Import / Export</h2>'
+    + '<h3 style="margin:10px 0 6px">Export (Textliste)</h3><textarea id="expTa" style="width:100%;height:180px">'+esc(list)+'</textarea>'
+    + '<div class="row" style="margin:6px 0"><button onclick="navigator.clipboard.writeText($(\'expTa\').value);toast(\'Kopiert!\')">Kopieren</button>'
+    + '<button onclick="downloadText(\''+esc(d.name)+'.txt\', $(\'expTa\').value)">Als Datei</button></div>'
+    + '<h3 style="margin:14px 0 6px">Import</h3><p class="muted">Format: „4 Lightning Bolt" oder „4x Lightning Bolt" — pro Zeile eine Karte. Mengen werden zur bestehenden Liste addiert.</p>'
+    + '<textarea id="impTa" style="width:100%;height:180px" placeholder="4 Lightning Bolt&#10;20 Mountain"></textarea>'
+    + '<div class="row" style="margin:8px 0"><label><input type="checkbox" id="impReplace" checked> Bestehende Liste ersetzen</label></div>'
+    + '<button class="primary" onclick="doImport()">Importieren</button> <span class="muted" id="impStatus"></span>';
+  $("modal").classList.add("open");
+}
+function doImport(){
+  const d = allDecks().find(x=>x.id===currentDeckId); if(!d) return;
+  const lines = $("impTa").value.split("\n").map(l=>l.trim()).filter(Boolean);
+  if($("impReplace").checked) d.cards = [];
+  let pending = lines.length, failed = [];
+  const status = $("impStatus");
+  for(const line of lines){
+    const m = line.match(/^(\d+)\s*[x×]?\s+(.+?)(?:\s*\(([^)]+)\))?$/);
+    const qty = m ? +m[1] : 1;
+    const name = m ? m[2] : line;
+    resolveCard(name).then(card => {
+      if(card) addCardToDeckSilent(d, card, qty);
+      else failed.push(name);
+    }).finally(() => {
+      pending--;
+      if(pending <= 0){
+        saveDecks(allDecks()); loadDeckToUI();
+        status.textContent = failed.length ? "Nicht gefunden: "+failed.join(", ") : "✓ Import fertig.";
+      }
+    });
+  }
+}
+function addCardToDeckSilent(d, card, qty){
+  const ex = d.cards.find(c=>c.name===card.name);
+  if(ex) ex.qty += qty; else d.cards.push({...card, qty});
+}
+async function resolveCard(name){
+  // 1) bulk DB (English or German name)
+  const nl = name.toLowerCase();
+  let hit = cardDB.find(c => c.name.toLowerCase() === nl);
+  if(!hit) hit = cardDB.find(c => (c.de_name||"").toLowerCase() === nl);
+  if(hit) return toFull(hit);
+  // 2) scryfall API
+  try{
+    const c = await jfetch("https://api.scryfall.com/cards/named?fuzzy=" + encodeURIComponent(name));
+    return canonicalCard(c);
+  }catch(e){ return null; }
+}
+function downloadText(filename, text){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], {type:"text/plain"}));
+  a.download = filename; a.click(); URL.revokeObjectURL(a.href);
+}
+function exportAllDecks(){
+  downloadText("mtg-decks.json", JSON.stringify(allDecks(), null, 2));
+}
+function importAllDecks(inp){
+  const f = inp.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = () => { try{ localStorage.setItem("mtg_decks", r.result); refreshDeckSelect(); loadDeckToUI(); toast("Decks importiert."); }catch(e){ toast("Fehler: "+e.message); } };
+  r.readAsText(f);
+}
+</script>
+<script>
+"use strict";
+/* ================= Playtest (Goldfishing) ================= */
+const PHASES = ["Verwahrungsphase (Verwahr-, Aufwach-, Zieh-Schritt)","Hauptphase 1","Kampfphase","Hauptphase 2","Zugende"];
+let game = null;
+
+function shuffled(a){ const x = a.slice(); for(let i = x.length-1; i > 0; i--){ const j = Math.floor(Math.random()*(i+1)); [x[i],x[j]] = [x[j],x[i]]; } return x; }
+
+function startPlayTest(withOpponent){
+  const selVal = $("deckSelect").value;
+  if(selVal && allDecks().some(x=>x.id===selVal)) currentDeckId = selVal;
+  const d = allDecks().find(x=>x.id===currentDeckId);
+  if(!d){ toast("Bitte im Deckbau-Tab ein Deck wählen."); switchTab("decks"); return; }
+  const cards = d.cards.flatMap(c => Array(c.qty).fill(c));
+  if(cards.length < 20){ toast("Deck braucht mindestens 20 Karten zum Testen."); return; }
+  game = {
+    deck: shuffled(cards), library: [], hand: [], battlefield: [], graveyard: [],
+    life: 20, turn: 0, phase: 0, manaPool: [], playedLand: false,
+    name: d.name, log: [], lifeHistory: [20], opp: null
+  };
+  game.library = game.deck.slice(7);
+  game.hand = game.deck.slice(0,7);
+  $("playDeckTitle").textContent = "⚔️ " + d.name + " (Testspiel)";
+  if(withOpponent){
+    const oppDeck = generateOpponentDeck();
+    if(oppDeck){
+      game.opp = {
+        name: oppDeck.name, life: 20, library: oppDeck.cards.slice(7), hand: oppDeck.cards.slice(0,7),
+        battlefield: [], graveyard: [], manaPool: [], playedLand: false
+      };
+      log("🤖 Gegner-Deck erzeugt: „"+oppDeck.name+"“ ("+oppDeck.cards.length+" Karten). Der Gegner zieht automatisch.");
+      $("playDeckTitle").textContent = "⚔️ " + d.name + " vs. 🤖 " + oppDeck.name;
+    } else log("⚠ Kein Gegner-Deck möglich (Kartendaten laden im 💾-Tab) — Testspiel ohne Gegner.");
+  }
+  log("Testpartie gestartet. Starthand: 7 Karten. Klicke „Beginne Zug“ für Zug 1.");
+  switchTab("play"); renderPlay();
+}
+
+/* ================= Opponent deck generator ================= */
+function generateOpponentDeck(){
+  if(!cardDB.length){ toast("Für den Gegner-Generator bitte zuerst Kartendaten laden (Tab 💾 Daten)."); return null; }
+  const cols = [...document.querySelectorAll(".oppCol:checked")].map(c=>c.value);
+  const legal = $("oppLegal") ? $("oppLegal").value : "modern";
+  const strategy = $("oppStrategy") ? $("oppStrategy").value : "aggro";
+  if(!cols.length){ toast("Bitte mindestens eine Farbe für den Gegner wählen."); return null; }
+  const colSet = new Set(cols);
+  const isLegal = c => !legal || (c.legal && c.legal[legal] === "legal");
+  const pool = cardDB.filter(c =>
+    isLegal(c) && c.type_line &&
+    !c.type_line.includes("Vanguard") && !c.type_line.includes("Scheme") && !c.type_line.includes("Plane") &&
+    !c.type_line.includes("Phenomenon") && !c.type_line.includes("Conspiracy") && !c.type_line.includes("Attraction") &&
+    c.layout !== "transform" && c.layout !== "modal_dfc" && c.layout !== "split" && c.layout !== "adventure" &&
+    c.layout !== "meld" && c.layout !== "battle" && c.layout !== "reversible_card" &&
+    c.cmc !== undefined
+  );
+  const strat = {
+    aggro:   { creatures: 24, cmcMax: 3, spells: 12, spellMax: 2 },
+    midrange:{ creatures: 20, cmcMax: 5, spells: 16, spellMax: 4 },
+    control: { creatures: 12, cmcMax: 7, spells: 24, spellMax: 5 }
+  }[strategy] || { creatures: 20, cmcMax: 4, spells: 16, spellMax: 3 };
+  const inColors = c => c.colorIdentity.length && c.colorIdentity.every(x => colSet.has(x));
+  const creatures = pool.filter(c => c.type_line.includes("Creature") && c.pow !== undefined && inColors(c) && c.cmc <= strat.cmcMax);
+  const spells = pool.filter(c => (c.type_line.includes("Instant") || c.type_line.includes("Sorcery")) && inColors(c) && c.cmc <= strat.spellMax &&
+    /damage|destroy|counter target|draw|gain [0-9]|flying|trample|lifelink|deathtouch|menace/i.test(c.oracle||""));
+  if(!creatures.length){ toast("Keine passenden Kreaturen gefunden — andere Farben/Legalität wählen."); return null; }
+  const pick = (arr, n, scoreFn) => {
+    const out = [];
+    const nameCount = {};
+    for(const c of arr.slice().sort((a,b) => scoreFn(b) - scoreFn(a))){
+      if(out.length >= n) break;
+      if((nameCount[c.name]||0) >= 4) continue;
+      nameCount[c.name] = (nameCount[c.name]||0) + 1;
+      out.push({...c, qty:1});
+    }
+    return out.slice(0, n);
+  };
+  const deckCreatures = pick(creatures, strat.creatures, c => ((+c.pow||0)+(+c.tou||0))*2 + (strategy==="aggro" ? (6-2*c.cmc) : c.cmc*2));
+  const deckSpells = pick(spells, strat.spells, c => (c.cmc||0));
+  const basicNames = { W:"Plains", U:"Island", B:"Swamp", R:"Mountain", G:"Forest" };
+  const basicLands = cols.map(col => {
+    const bl = cardDB.find(c => c.name === basicNames[col]);
+    return bl ? {...bl, qty:1} : {name: basicNames[col], type_line:"Basic Land — "+basicNames[col], mana_cost:"", cmc:0, oracle:"T: Add {"+col+"}", img:"", colors:[], colorIdentity:[col], qty:1, pow:undefined, tou:undefined};
+  });
+  const deckLands = [];
+  const landCount = Math.max(0, 60 - deckCreatures.length - deckSpells.length);
+  for(let i=0;i<landCount;i++) deckLands.push({ ...basicLands[i % basicLands.length], qty:1 });
+  const cards60 = [...deckCreatures, ...deckSpells, ...deckLands];
+  const stratNames = { aggro:"Aggro", midrange:"Midrange", control:"Control" };
+  return { name: "KI-Gegner ("+cols.join("")+" · "+stratNames[strategy]+")", cards: shuffled(cards60) };
+}
+
+function mulligan(){
+  if(!game || game.turn > 0){ toast("Mulligan nur vor dem ersten Zug (Regel 103.5)."); return; }
+  const n = game.hand.length;
+  if(n <= 1){ toast("Hand ist schon bei 1 Karte."); return; }
+  game.library = shuffled(game.hand.concat(game.library));
+  game.hand = game.library.slice(0, n-1);
+  game.library = game.library.slice(n-1);
+  log("Mulligan: neue Hand mit " + game.hand.length + " Karten (unten abgelegte Karte gem. Regel 103.5 vereinfacht).");
+  renderPlay();
+}
+
+const PHASE_NAMES = { 0: "Zugbeginn (Verwahrungsphase)", 1: "Verwahrungsphase", 2: "Hauptphase 1", 3: "Kampfphase", 4: "Hauptphase 2" };
+function isMainPhase(){ return game && (game.phase === 2 || game.phase === 4); }
+function phaseName(){ return game ? (PHASE_NAMES[game.phase] || "Zugende") : "—"; }
+
+function nextPhase(){
+  if(!game) return;
+  if(game.phase === 0){ // beginning turn
+    game.turn++;
+    game.playedLand = false;
+    game.battlefield.forEach(p => p.tapped = false);
+    log("— Zug " + game.turn + " —");
+    log("Verwahrungsphase: Permanente werden enttappt.");
+    if(game.turn > 1){
+      const c = game.library.pop();
+      if(!c){ log("⚠ Bibliothek leer — nicht ziehen (Regel 104.3c: Zugversuch = Niederlage). Partie beendet."); endPlay(); return; }
+      game.hand.push(c); log("Zugschritt: gezogen → "+c.name);
+    } else log("(Erster Zug: kein Ziehen, Regel 103.8a)");
+    game.phase = 1;
+    $("phaseBtn").textContent = "→ Hauptphase 1";
+  } else if(game.phase === 1){
+    game.phase = 2;
+    game.manaPool = [];
+    $("phaseBtn").textContent = "→ Kampfphase";
+    log("Hauptphase 1: Jetzt Länder legen und Zauber wirken (Handkarte anklicken).");
+  } else if(game.phase === 2){
+    game.phase = 3;
+    log("Kampfphase: Angreifer deklarieren? (Kreatur im Schlachtfeld anklicken, dann Phasen-Button weiterklicken)");
+    $("phaseBtn").textContent = "→ Kampfschaden & Hauptphase 2";
+  } else if(game.phase === 3){
+    game.phase = 4;
+    const myAtk = game.battlefield.filter(p => p.kind==="perm" && p.attacking);
+    if(myAtk.length){
+      const dmg = myAtk.reduce((s,a)=>s+(+a.pow||0),0);
+      myAtk.forEach(a=>a.attacking=false);
+      if(game.opp){
+        game.opp.life -= dmg;
+        log("⚔ Deine "+myAtk.length+" Angreifer fügen dem Gegner "+dmg+" Schaden zu — Gegner-Leben: "+game.opp.life+" (Regel 510.2, vereinfacht: Gegner blockt nicht).");
+        checkGameEnd();
+      } else log("⚔ Goldfisch: "+myAtk.length+" Angreifer hätten "+dmg+" Schaden verursacht.");
+    } else log("Kampfphase: Keine Angreifer deklariert.");
+    log("Hauptphase 2: Wieder Länder legen / zaubern möglich.");
+    $("phaseBtn").textContent = "→ Zug beenden";
+  } else {
+    if(game.hand.length > 7){ log("Aufräumschritt: Hand > 7 — bitte Karten ablegen (Handkarte anklicken → Ablagen)."); }
+    game.manaPool = [];
+    log("Zug beendet (Aufräumschritt, Regel 514).");
+    game.phase = 0;
+    $("phaseBtn").textContent = "Beginne Zug "+(game.turn+1);
+    if(game && game.opp){ oppTurn(); if(game) log("Dein Zug " + (game.turn+1) + " — bereit."); }
+  }
+  renderPlay();
+}
+
+function handAction(idx){
+  const c = game.hand[idx]; if(!c) return;
+  const t = c.type_line || "";
+  const isLand = t.includes("Land");
+  const info = [];
+  const actions = [];
+  if(!isMainPhase()) info.push("Aktuell: "+phaseName()+" \u2014 Länder/Zauber nur in einer Hauptphase spielbar (Regel 305.2a / 307.1). Klicke den Phasen-Button bis zur Hauptphase.");
+  if(isLand){
+    if(isMainPhase()){
+      if(game.playedLand) info.push("Dieses Zug wurde schon ein Land gespielt (Regel 305.2b).");
+      else actions.push("Land spielen");
+    }
+  } else {
+    if(isMainPhase()){
+      if(canPay(c)) actions.push("Zauber wirken");
+      else info.push("Nicht genug Mana ("+costSummary(c)+" nötig). Tippe zuerst Länder im Schlachtfeld an, um Mana zu erzeugen.");
+    }
+  }
+  actions.push("Karte ablegen (Friedhof) — bewusst");
+  const lines = actions.map((a,i)=>(i+1)+") "+a).join("\n");
+  const choice = prompt("Karte: "+c.name+"   [Phase: "+phaseName()+"]\n\n"+(c.oracle||c.type_line||"")+"\n\n"+(info.length?info.join("\n")+"\n\n":"")+"Aktion wählen:\n"+lines+"\n\nNummer eingeben (oder Abbrechen):");
+  if(choice === null) return;
+  const n = parseInt(choice);
+  if(isNaN(n) || n < 1 || n > actions.length){ toast("Ungültige Wahl — bitte Nummer 1\u2013"+actions.length+" eingeben."); return; }
+  const act = actions[n-1];
+  if(act === "Land spielen"){ playLand(idx); toast("Land gespielt: "+c.name); }
+  else if(act === "Zauber wirken"){ castSpell(idx); }
+  else if(act === "Karte ablegen (Friedhof) — bewusst"){ if(confirm(c.name+" wirklich auf den Friedhof legen?")){ game.graveyard.push(...game.hand.splice(idx,1)); log("Abgelegt: "+c.name); renderPlay(); } }
+}
+function costSummary(c){
+  const cost = parseCost(c.mana_cost);
+  const parts = [];
+  if(cost.C) parts.push(cost.C+" generisch");
+  ["W","U","B","R","G"].forEach(col=>{ if(cost[col]) parts.push("{"+col+"} x"+cost[col]); });
+  return parts.join(" + ") || "0";
+}
+
+function canPay(c){
+  // Farbige Mana dürfen generische Kosten bezahlen (Regel 202.4 / 118.1): erst farbige Kosten abziehen,
+  // dann prüfen, ob der Rest (farbig + farblos) die generischen Kosten deckt.
+  const cost = parseCost(c.mana_cost);
+  const pool = poolCount();
+  let coloredLeft = 0;
+  for(const col of ["W","U","B","R","G"]){
+    if((pool[col]||0) < (cost[col]||0)) return false;
+    coloredLeft += Math.max(0, (pool[col]||0) - (cost[col]||0));
+  }
+  return (pool.C + coloredLeft) >= cost.C;
+}
+function parseCost(mc){
+  const out = { C: 0, W: 0, U: 0, B: 0, R: 0, G: 0 };
+  if(!mc) return out;
+  let generic = 0;
+  (mc.match(/\{[^}]+\}/g)||[]).forEach(sym => {
+    const s = sym.slice(1,-1);
+    if(/^\d+$/.test(s)) generic += +s;
+    else if(["W","U","B","R","G"].includes(s)) out[s]++;
+    else if(/^\d\/[WUBRG]$/.test(s)) { out[s[2]]++; }
+    else if(/^[WUBRG]\/[WUBRG]$/.test(s)) { out[s[0]]++; } // simplified hybrid
+    else if(/^\d$/.test(s)) generic += +s;
+    else generic += 1; // X etc. simplified
+  });
+  out.C = generic;
+  return out;
+}
+function poolCount(){ const p = { C:0, W:0, U:0, B:0, R:0, G:0 }; game.manaPool.forEach(m=>p[m]++); return p; }
+
+function playLand(idx){
+  const c = game.hand.splice(idx,1)[0];
+  game.battlefield.push({ ...c, kind: "land", tapped: false });
+  game.playedLand = true;
+  log("Land gespielt: "+c.name);
+  renderPlay();
+}
+function castSpell(idx){
+  const c = game.hand[idx];
+  if(!canPay(c)){ toast("Nicht genug Mana ("+costSummary(c)+" nötig) — tippe Länder für Mana an."); return; }
+  const cost = parseCost(c.mana_cost);
+  const pool = poolCount();
+  const newPool = [];
+  let genericNeed = cost.C;
+  // 1) exakte farbige Kosten bezahlen
+  for(const col of ["W","U","B","R","G"]){
+    const use = Math.min(pool[col]||0, cost[col]||0);
+    let leftOver = (pool[col]||0) - use;
+    for(let i=0;i<leftOver;i++) newPool.push(col);
+  }
+  // 2) generische Kosten: zuerst farbloses Mana, dann übrigens farbiges (Regel 202.4)
+  let colorlessLeft = pool.C;
+  const fromColorless = Math.min(colorlessLeft, genericNeed);
+  colorlessLeft -= fromColorless; genericNeed -= fromColorless;
+  // Rest aus newPool (farbige) entnehmen
+  while(genericNeed > 0 && newPool.length > 0){ newPool.pop(); genericNeed--; }
+  for(let i=0;i<colorlessLeft;i++) newPool.push("C");
+  game.manaPool = newPool;
+  game.hand.splice(idx,1);
+  const t = c.type_line || "";
+  if(t.includes("Creature") || t.includes("Artifact") || t.includes("Enchantment") || t.includes("Planeswalker") || t.includes("Land") || t.includes("Battle")){
+    game.battlefield.push({ ...c, kind: "perm", tapped: false, counters: c.loyalty ? +c.loyalty : 0, dmg: 0 });
+    log("Verzaubert: "+c.name+" ("+(c.pow||"?")+"/"+(c.tou||"?")+")");
+  } else {
+    game.graveyard.push(c);
+    log("Zauber: "+c.name+" →_stack→ Friedhof (Effekt manuell ausführen — Goldfisch-Modus)");
+  }
+  renderPlay();
+}
+function permAction(idx){
+  const p = game.battlefield[idx]; if(!p) return;
+  if(p.kind === "land"){
+    if(p.tapped){ toast(p.name+" ist bereits getappt — {T} nur einmal pro Aktivierung möglich (Regel 106.12)."); return; }
+    const choice = confirm("Land: "+p.name+"\n\nOK = für Mana tappen ({T}: 1 farbloses oder farbiges Mana)\nAbbrechen = nichts tun");
+    if(choice){
+      p.tapped = true;
+      const col = landColor(p);
+      game.manaPool.push(col);
+      log("Für Mana getappt: "+p.name+" → {"+col+"}");
+      renderPlay();
+    }
+  } else {
+    const isCreature = (p.type_line||"").includes("Creature");
+    const acts = ["Tappen/Enttappen"];
+    if(isCreature) acts.push("Mit Kreatur angreifen (Kampf)");
+    acts.push("Hinweis: Opfern ist nur via Zauber/Fähigkeit möglich (Regel 701.2) — nicht frei wählbar.");
+    const menu = acts.map((a,i)=>(i+1)+") "+a).join("\n");
+    const choice = prompt("Permanent: "+p.name+(p.pow?" ("+p.pow+"/"+p.tou+")":"")+"\n\n"+menu+"\n\nNummer:");
+    if(choice === "1"){ p.tapped = !p.tapped; log(p.name+" "+(p.tapped?"getappt":"enttappt")); renderPlay(); }
+    else if(isCreature && choice === "2"){
+      if(p.tapped){ toast("Getappte Kreaturen greifen nicht an (Regel 508.1a)."); return; }
+      if(game.phase !== 3){ toast("Angriff nur in der Kampfphase (Regel 508) — aktuell: "+phaseName()); return; }
+      p.tapped = true; p.attacking = true;
+      log("Angreifer deklariert: "+p.name+(p.pow?" — Schaden bei unblockiertem Angriff: "+p.pow:""));
+      renderPlay();
+    } else if(!isCreature && choice === "2"){
+      toast("Opfern ist nur über Zauber oder Fähigkeiten möglich (Regel 701.2).");
+    }
+  }
+}
+function landColor(p){
+  const t = (p.oracle||"")+" "+(p.type_line||"");
+  if(/add \{?W\}?/i.test(t)) return "W";
+  if(/add \{?U\}?/i.test(t)) return "U";
+  if(/add \{?B\}?/i.test(t)) return "B";
+  if(/add \{?R\}?/i.test(t)) return "R";
+  if(/add \{?G\}?/i.test(t)) return "G";
+  if(/Plains/.test(t)) return "W"; if(/Island/.test(t)) return "U"; if(/Swamp/.test(t)) return "B";
+  if(/Mountain/.test(t)) return "R"; if(/Forest/.test(t)) return "G";
+  return "C";
+}
+/* ================= Gegner-KI (automatischer Zug) ================= */
+function oppCanPay(c){
+  const cost = parseCost(c.mana_cost);
+  const p = { C:0, W:0, U:0, B:0, R:0, G:0 };
+  game.opp.manaPool.forEach(m=>p[m]++);
+  let coloredLeft = 0;
+  for(const col of ["W","U","B","R","G"]){
+    if(p[col] < (cost[col]||0)) return false;
+    coloredLeft += Math.max(0, p[col] - (cost[col]||0));
+  }
+  return (p.C + coloredLeft) >= cost.C;
+}
+function oppPayAndCast(idx){
+  const o = game.opp;
+  const c = o.hand[idx];
+  const cost = parseCost(c.mana_cost);
+  const p = { C:0, W:0, U:0, B:0, R:0, G:0 };
+  o.manaPool.forEach(m=>p[m]++);
+  const newPool = [];
+  let genericNeed = cost.C;
+  for(const col of ["W","U","B","R","G"]){
+    const use = Math.min(p[col]||0, cost[col]||0);
+    const left = (p[col]||0) - use;
+    for(let i=0;i<left;i++) newPool.push(col);
+  }
+  const fromColorless = Math.min(p.C, genericNeed);
+  let colorlessLeft = p.C - fromColorless; genericNeed -= fromColorless;
+  while(genericNeed > 0 && newPool.length){ newPool.pop(); genericNeed--; }
+  for(let i=0;i<colorlessLeft;i++) newPool.push("C");
+  o.manaPool = newPool;
+  o.hand.splice(idx,1);
+  const t = c.type_line || "";
+  if(t.includes("Creature") || t.includes("Artifact") || t.includes("Enchantment") || t.includes("Planeswalker")){
+    o.battlefield.push({ ...c, kind:"perm", tapped:false, counters: c.loyalty ? +c.loyalty : 0 });
+    log("\U0001F916 Gegner: "+c.name+(c.pow?" ("+c.pow+"/"+c.tou+")":"")+" ausgespielt.");
+  } else {
+    o.graveyard.push(c);
+    log("\U0001F916 Gegner: Zauber "+c.name+" (Effekt vereinfacht).");
+    applySimpleOppSpell(c);
+  }
+}
+function applySimpleOppSpell(c){
+  const o = game.opp;
+  const txt = (c.oracle||"").toLowerCase();
+  const dmgM = txt.match(/deals? ([0-9]+) damage/);
+  if(dmgM){ const d = +dmgM[1]; game.life -= d; log("\U0001F916 "+c.name+": "+d+" Schaden an dir (Leben "+game.life+")."); checkGameEnd(); }
+}
+function oppTurn(){
+  if(!game || !game.opp) return;
+  const o = game.opp;
+  log("\u2014 \U0001F916 Gegner-Zug "+(game.turn+1)+" \u2014");
+  o.battlefield.forEach(p=>p.tapped = false);
+  const drawn = o.library.pop();
+  if(drawn) o.hand.push(drawn);
+  else { log("\U0001F916 Gegner kann nicht ziehen \u2014 Regel 104.3c w\u00FCrde Niederlage bedeuten (vereinfacht ignoriert)."); }
+  // Hauptphase: Länder legen
+  o.playedLand = false;
+  const landIdx = o.hand.findIndex(c => (c.type_line||"").includes("Land"));
+  if(landIdx >= 0 && !o.playedLand){
+    const land = o.hand.splice(landIdx,1)[0];
+    o.battlefield.push({ ...land, kind:"land", tapped:false });
+    o.playedLand = true;
+    log("\U0001F916 Gegner: Land ("+land.name+") gespielt.");
+  }
+  // Länder für Mana tappen (alle, bis genug für größte spielbare Karte)
+  const untappedLands = o.battlefield.filter(p=>p.kind==="land" && !p.tapped);
+  untappedLands.forEach(l => { l.tapped = true; o.manaPool.push(landColor(l)); });
+  if(untappedLands.length) log("\U0001F916 Gegner: tappt "+untappedLands.length+" Land/Länder für Mana.");
+  // Zaubern: so viele Kreaturen wie möglich (aggressiv), dann Zauber
+  let casted = true;
+  while(casted){
+    casted = false;
+    let best = -1, bestScore = -1;
+    for(let i=0;i<o.hand.length;i++){
+      const c = o.hand[i];
+      const t = c.type_line||"";
+      if(t.includes("Land")) continue;
+      if(!oppCanPay(c)) continue;
+      const score = (t.includes("Creature") ? 100 : 50) + (+c.pow||0) + (+c.tou||0);
+      if(score > bestScore){ bestScore = score; best = i; }
+    }
+    if(best >= 0){ oppPayAndCast(best); casted = true; }
+  }
+  // Kampf: alle ungetappten Kreaturen angreifen
+  const atk = o.battlefield.filter(p => p.kind==="perm" && !p.tapped && (p.type_line||"").includes("Creature"));
+  if(atk.length){
+    log("\U0001F916 Gegner greift an mit "+atk.map(c=>c.name+" ("+c.pow+"/"+c.tou+")").join(", "));
+    atk.forEach(a => a.tapped = true);
+    oppResolveCombat(atk);
+  } else log("\U0001F916 Gegner greift nicht an.");
+  o.manaPool = [];
+  renderPlay();
+}
+function oppResolveCombat(attackers){
+  // Du bestimmst Blocker via prompt (vereinfacht)
+  let totalDmg = 0;
+  const blockers = game.battlefield.filter(p => p.kind==="perm" && (p.type_line||"").includes("Creature") && !p.tapped);
+  for(const atk of attackers){
+    let blocked = null;
+    if(blockers.length){
+      const opts = blockers.map((b,i)=>(i+1)+") "+b.name+" ("+b.pow+"/"+b.tou+")").join("\n");
+      const ch = prompt("\U0001F916 Angreifer: "+atk.name+" ("+atk.pow+"/"+atk.tou+")\n\nBlocken?\n0) Nein, Schaden nehmen\n"+opts+"\n\nNummer:");
+      if(ch !== null && ch !== "" && !isNaN(+ch) && +ch >= 1 && +ch <= blockers.length){
+        blocked = blockers[+ch-1];
+      }
+    } else {
+      if(game.battlefield.filter(p=>p.kind==="perm"&&(p.type_line||"").includes("Creature")).length === 0){
+        // keine Blocker überhaupt
+      }
+    }
+    if(blocked){
+      // Vereinfachter Kampf: gegenseitiger Schaden (Regel 510.2 vereinfacht)
+      const atkDmg = +atk.pow || 0, blkDmg = +blocked.pow || 0;
+      const blkTou = +blocked.tou || 0, atkTou = +atk.tou || 0;
+      if(atkDmg >= blkTou){ game.battlefield = game.battlefield.filter(p => p !== blocked); game.graveyard.push(blocked); log("\u2716 Dein Blocker "+blocked.name+" stirbt (Regel 704.5g vereinfacht)."); }
+      if(blkDmg >= atkTou){ o_idx = game.opp ? game.opp.battlefield.indexOf(atk) : -1; if(o_idx>=0){ game.opp.battlefield.splice(o_idx,1); game.opp.graveyard.push(atk); } log("\u2714 Angreifer "+atk.name+" stirbt."); }
+      if(atkDmg < blkTou && blkDmg < atkTou) log("\u2694 "+blocked.name+" blockt "+atk.name+" \u2014 beide \u00FCberleben (vereinfacht, Schaden wird bis Zugende \u2018markiert\u2019 hier ignoriert).");
+    } else {
+      totalDmg += +atk.pow || 0;
+    }
+  }
+  if(totalDmg > 0){
+    game.life -= totalDmg;
+    log("\U0001F916 Unblockierter Kampfschaden: "+totalDmg+" \u2014 dein Leben: "+game.life+" (Regel 510.2).");
+  }
+  checkGameEnd();
+}
+function checkGameEnd(){
+  if(game.opp && game.opp.life <= 0){ log("\Uud83C\uDFA6 SIEG! Das Gegner-Leben ist auf 0."); toast("\u2705 Du gewinnst!"); game = null; renderPlay(); }
+  else if(game && game.life <= 0){ log("\u2620 NIEDERLAGE: Dein Leben ist auf 0 (Regel 104.3b)."); toast("\u274C Du verlierst!"); game = null; renderPlay(); }
+}
+function endPlay(){ if(game){ log("Partie beendet."); game = null; renderPlay(); $("playDeckTitle").textContent = "Kein Deck geladen"; } }
+
+function renderPlay(){
+  if(!game){ ["stLife","stTurn","stMana","stHand","stLib","stLands"].forEach(i=>$(i).textContent="0"); $("stPhase").textContent="—"; $("stOppLife").textContent="—"; $("handRow").innerHTML=""; $("battlefield").innerHTML=""; $("graveyard").innerHTML=""; $("playLog").innerHTML=""; $("manaPips").innerHTML=""; $("oppHand").textContent=""; $("oppBattlefield").innerHTML=""; $("oppGraveyard").textContent=""; return; }
+  $("stLife").textContent = game.life;
+  $("stTurn").textContent = game.turn;
+  $("stMana").textContent = game.manaPool.length;
+  $("stHand").textContent = game.hand.length;
+  $("stLib").textContent = game.library.length;
+  $("stLands").textContent = game.battlefield.filter(p=>p.kind==="land").length;
+  $("stPhase").textContent = phaseName();
+  $("stOppLife").textContent = game.opp ? game.opp.life : "—";
+  $("oppHand").textContent = game.opp ? game.opp.hand.length + " Karten (verdeckt)" : "";
+  $("oppBattlefield").innerHTML = game.opp ? game.opp.battlefield.map(p =>
+    '<div class="perm'+(p.tapped?" tapped":"")+'"><span class="pname">'+esc(p.name)+'</span>'
+    + (p.pow ? '<span class="ppt">'+p.pow+'/'+p.tou+'</span>' : (p.kind==="land" ? '<span class="psub">Land</span>' : ""))
+    + '</div>').join("") : "";
+  $("oppGraveyard").textContent = game.opp ? game.opp.graveyard.map(c=>c.name).join(", ") : "";
+  const pips = { W:"sym-w",U:"sym-u",B:"sym-b",R:"sym-r",G:"sym-g",C:"sym-c" };
+  $("manaPips").innerHTML = game.manaPool.map(m=>'<span class="mana '+pips[m]+'">'+(m==="C"?"◇":m)+'</span>').join("");
+  $("handRow").innerHTML = game.hand.map((c,i) =>
+    '<div class="handCard" onclick="handAction('+i+')">'+(c.img?'<img loading="lazy" src="'+c.img+'">':'<div style="padding:4px"><b>'+esc(c.name)+'</b><br>'+manaHTML(c.mana_cost)+'</div>')+'</div>').join("");
+  $("battlefield").innerHTML = game.battlefield.map((p,i) =>
+    '<div class="perm'+(p.tapped?" tapped":"")+'" onclick="permAction('+i+')"><span class="pname">'+esc(p.name)+(p.kind==="land"?" <span class='psub'>(Land)</span>":"")+'</span>'
+    + (p.pow ? '<span class="ppt">'+p.pow+'/'+p.tou+'</span>' : (p.counters ? '<span class="ppt">'+p.counters+'</span>' : ""))
+    + '</div>').join("");
+  $("graveyard").innerHTML = game.graveyard.map(c=>esc(c.name)).join(", ") || "—";
+  $("playLog").innerHTML = game.log.map(l=>"<div>"+esc(l)+"</div>").join("");
+  $("playLog").scrollTop = 1e9;
+}
+function log(msg){ if(game) game.log.push(msg); }
+
+/* ================= Tabs & init ================= */
+function switchTab(name){
+  document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
+  $("tab-"+name).classList.add("active");
+  document.querySelectorAll("nav#tabs button").forEach(b=>b.classList.toggle("active", b.dataset.tab===name));
+}
+document.querySelectorAll("nav#tabs button").forEach(b => b.addEventListener("click", () => switchTab(b.dataset.tab)));
+$("q").addEventListener("keydown", e => { if(e.key === "Enter") runSearch(); });
+$("ruleQ").addEventListener("keydown", e => { if(e.key === "Enter") searchRules(); });
+
+function updateStatus(){
+  const parts = [];
+  parts.push(cardDB.length ? "📚 "+cardDB.length.toLocaleString("de-DE")+" Karten" : "⚡ Live-Suche (kein Bulk)");
+  parts.push(rules.rules.length ? "📖 Regeln "+rules.version : "📖 Regeln nicht geladen");
+  parts.push(allDecks().length ? "🃏 "+allDecks().length+" Decks" : "");
+  $("status").textContent = parts.filter(Boolean).join(" · ");
+}
+
+(async function init(){
+  refreshDeckSelect(); loadDeckToUI();
+  // load rules from cache or net
+  await loadRules(false);
+  // load card db from IndexedDB
+  try{
+    const saved = await idbGet("cards");
+    if(saved && saved.length){ cardDB = saved; $("bulkStatus").textContent = "✓ "+cardDB.length.toLocaleString("de-DE")+" Karten im Cache (Stand "+new Date().toLocaleDateString("de-DE")+")"; }
+    else $("bulkStatus").textContent = "Noch keine Kartendaten geladen — Live-Suche über Scryfall aktiv.";
+  }catch(e){ $("bulkStatus").textContent = "IndexedDB nicht verfügbar: Live-Suche aktiv."; }
+  updateStatus();
+})();
+</script>
+</body>
+</html>
