@@ -1483,6 +1483,10 @@ function permAction(idx){
     else if(isCreature && choice === "2"){
       if(p.tapped){ toast("Getappte Kreaturen greifen nicht an (Regel 508.1a)."); return; }
       if(game.phase !== 3){ toast("Angriff nur in der Kampfphase (Regel 508) — aktuell: "+phaseName()); return; }
+      const txt = (p.oracle||"").toLowerCase();
+      if((p.type_line||"").toLowerCase().includes("defender")){ toast(p.name+" hat Defender — kann nicht angreifen (Regel 702.3)."); return; }
+      if(txt.includes("can't attack") || txt.includes("cannot attack")){ toast("Kartentext von "+p.name+" verbietet den Angriff."); return; }
+      if(p.turnPlayed === game.turn && !txt.includes("haste")){ toast("Einsatzverzögerung: "+p.name+" wurde dieses Zug gespielt und hat kein Hast (Regel 302.6). Nächstes Zug angreifbar."); return; }
       p.tapped = true; p.attacking = true;
       log("Angreifer deklariert: "+p.name+(p.pow?" — Schaden bei unblockiertem Angriff: "+p.pow:""));
       renderPlay();
@@ -1596,36 +1600,39 @@ function oppTurn(){
   renderPlay();
 }
 function oppResolveCombat(attackers){
-  // Du bestimmst Blocker via prompt (vereinfacht)
+  // Blocker-Deklaration (vereinfacht): Jede deiner Kreaturen kann nur EINEN Angreifer blocken (Regel 509.1a).
+  // Getappte Kreaturen dürfen blocken (Regel 509.1a: Tappen ist kein Block-Hindernis).
   let totalDmg = 0;
-  const blockers = game.battlefield.filter(p => p.kind==="perm" && (p.type_line||"").includes("Creature") && !p.tapped);
+  const available = game.battlefield.filter(p => p.kind==="perm" && (p.type_line||"").includes("Creature") && !p.attacking);
+  const used = new Set();
   for(const atk of attackers){
+    const blockers = available.filter(b => !used.has(b));
     let blocked = null;
     if(blockers.length){
       const opts = blockers.map((b,i)=>(i+1)+") "+b.name+" ("+b.pow+"/"+b.tou+")").join("\n");
-      const ch = prompt("\U0001F916 Angreifer: "+atk.name+" ("+atk.pow+"/"+atk.tou+")\n\nBlocken?\n0) Nein, Schaden nehmen\n"+opts+"\n\nNummer:");
+      const ch = prompt("🤖 Angreifer: "+atk.name+" ("+atk.pow+"/"+atk.tou+")\n\nBlocken?\n0) Nein, Schaden nehmen\n"+opts+"\n\nNummer:");
       if(ch !== null && ch !== "" && !isNaN(+ch) && +ch >= 1 && +ch <= blockers.length){
         blocked = blockers[+ch-1];
-      }
-    } else {
-      if(game.battlefield.filter(p=>p.kind==="perm"&&(p.type_line||"").includes("Creature")).length === 0){
-        // keine Blocker überhaupt
+        used.add(blocked);
       }
     }
     if(blocked){
-      // Vereinfachter Kampf: gegenseitiger Schaden (Regel 510.2 vereinfacht)
       const atkDmg = +atk.pow || 0, blkDmg = +blocked.pow || 0;
       const blkTou = +blocked.tou || 0, atkTou = +atk.tou || 0;
-      if(atkDmg >= blkTou){ game.battlefield = game.battlefield.filter(p => p !== blocked); game.graveyard.push(blocked); log("\u2716 Dein Blocker "+blocked.name+" stirbt (Regel 704.5g vereinfacht)."); }
-      if(blkDmg >= atkTou){ o_idx = game.opp ? game.opp.battlefield.indexOf(atk) : -1; if(o_idx>=0){ game.opp.battlefield.splice(o_idx,1); game.opp.graveyard.push(atk); } log("\u2714 Angreifer "+atk.name+" stirbt."); }
-      if(atkDmg < blkTou && blkDmg < atkTou) log("\u2694 "+blocked.name+" blockt "+atk.name+" \u2014 beide \u00FCberleben (vereinfacht, Schaden wird bis Zugende \u2018markiert\u2019 hier ignoriert).");
+      log("⚔ "+blocked.name+" ("+blkDmg+"/"+blkTou+") blockt "+atk.name+" ("+atkDmg+"/"+atkTou+").");
+      // Verteilung vereinfacht: simultaner Schaden (Regel 510.2)
+      let blockerDied = atkDmg >= blkTou;
+      let attackerDied = blkDmg >= atkTou;
+      if(blockerDied){ game.battlefield = game.battlefield.filter(p => p !== blocked); game.graveyard.push(blocked); log("✖ Dein Blocker "+blocked.name+" stirbt (Regel 704.5g vereinfacht)."); }
+      if(attackerDied){ const oi = game.opp.battlefield.indexOf(atk); if(oi>=0){ game.opp.battlefield.splice(oi,1); game.opp.graveyard.push(atk); } log("✔ Angreifer "+atk.name+" stirbt."); }
+      if(!blockerDied && !attackerDied) log("— Beide überleben (Schaden wird bis Zugende vereinfacht ignoriert).");
     } else {
       totalDmg += +atk.pow || 0;
     }
   }
   if(totalDmg > 0){
     game.life -= totalDmg;
-    log("\U0001F916 Unblockierter Kampfschaden: "+totalDmg+" \u2014 dein Leben: "+game.life+" (Regel 510.2).");
+    log("🤖 Unblockierter Kampfschaden: "+totalDmg+" — dein Leben: "+game.life+" (Regel 510.2).");
   }
   checkGameEnd();
 }
