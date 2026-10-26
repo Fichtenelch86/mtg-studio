@@ -334,8 +334,12 @@ mark { background: #6b5a1e; color: #ffe9a8; border-radius: 2px; }
       <p class="muted" style="margin:8px 0">Der komplette Kartendatensatz (~100.000 Karten) wird einmalig geladen und im Browser gespeichert. Danach funktioniert die Kartensuche nach allen Kriterien auch offline. Alternativ: Live-Suche ohne Bulk-Download.</p>
       <div id="bulkStatus" class="muted"></div>
       <div class="row" style="margin-top:10px">
-        <button class="primary" onclick="downloadBulk()">Kartendaten jetzt laden (empfohlen)</button>
-        <button onclick="deleteBulk()">Cache löschen</button>
+        <div class="row">
+          <button class="primary" onclick="downloadBulk()">Kompakt laden (empfohlen, ~25 MB, ideal für iPhone/Mobilgeräte)</button>
+          <button onclick="downloadBulk(true)">Vollversion laden (~80 MB, alle Drucke, nur für leistungsstarke Rechner)</button>
+          <button onclick="deleteBulk()">Cache löschen</button>
+        </div>
+        <p class="muted" style="margin-top:6px">Kompakt enthält jede Karte einmal (alle Regeln, alle Kriterien, Gegner-Generator, deutsche Namen). Vollversion zusätzlich jeden Druck/Jede Edition.</p>
       </div>
     </div>
     <div class="panel">
@@ -549,11 +553,44 @@ async function idbGet(k){
 async function idbGetRaw(k){ const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("kv","readonly"); const rq = tx.objectStore("kv").get(k); rq.onsuccess = ()=>res(rq.result); rq.onerror = ()=>rej(rq.error); }); }
 async function idbDel(k){ const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("kv","readwrite"); tx.objectStore("kv").delete(k); tx.oncomplete = res; tx.onerror = ()=>rej(tx.error); }); }
 
-async function downloadBulk(){
+async function finishBulk(compact, setStat, full){
+  progress(.55);
+  setStat(compact.length+" Karten verarbeitet \u2014 lade deutsche Kartennamen (Such-API, ca. 30\u201360 s)...");
+  let deNames = {};
+  try{
+    let page = 1, hasMore = true, got = 0;
+    while(hasMore){
+      const data = await jfetch("https://api.scryfall.com/cards/search?q=" + encodeURIComponent("lang:de") + "&unique=card&order=name&dir=asc&page="+page);
+      (data.data||[]).forEach(c => { if(c.printed_name) deNames[c.oracle_id] = c.printed_name; });
+      got += (data.data||[]).length; hasMore = !!data.has_more; page++;
+      progress(.55 + .35*Math.min(1, got/26000));
+      setStat("Deutsche Namen: "+got.toLocaleString("de-DE")+" geladen...");
+      await new Promise(r=>setTimeout(r, 120));
+    }
+  }catch(e){ setStat("Deutsche Namen teilweise fehlgeschlagen ("+e.message+") \u2014 fahre trotzdem fort..."); }
+  progress(.92);
+  let deCount = 0;
+  compact.forEach(cc => {
+    if(cc.oid && deNames[cc.oid] && !cc.de_name){
+      cc.de_name = deNames[cc.oid];
+      cc.full += " " + cc.de_name;
+      deCount++;
+    }
+  });
+  await idbSet("cards", compact);
+  cardDB = compact;
+  progress(1);
+  setStat("\u2713 "+cardDB.length.toLocaleString("de-DE")+" Karten gespeichert"+(deCount ? " (inkl. "+deCount.toLocaleString("de-DE")+" deutscher Namen)" : "")+".");
+  updateStatus();
+  toast("Kartendaten geladen: "+cardDB.length+" Karten");
+}
+
+async function downloadBulk(full){
   const setStat = t => { $("bulkStatus").textContent = t; };
   try{
-    setStat("Frage Scryfall nach Download-URI...");
-    const meta = await jfetch(SCRYFALL_BULK);
+    const endpoint = full ? "https://api.scryfall.com/bulk-data/default-cards" : "https://api.scryfall.com/bulk-data/oracle-cards";
+    setStat((full ? "Lade Vollversion" : "Lade Kompakt-Daten")+" — frage Scryfall...");
+    const meta = await jfetch(endpoint);
     const uri = meta.jsonl_download_uri || meta.download_uri;  // API liefert jsonl_download_uri
     if(!uri) throw new Error("Download-URI fehlt in der Scryfall-Antwort");
     setStat("Lade "+meta.name+" ("+(meta.compressed_size/1e6).toFixed(0)+" MB) — dauert 1–3 Minuten...");
@@ -565,8 +602,24 @@ async function downloadBulk(){
     // Streaming: dekomprimieren, dekodieren und Karten direkt kompaktieren (speicherschonend)
     const compact = [];
     let buf = "", processed = 0;
-    const srcStream = isGz ? resp.body.pipeThrough(new DecompressionStream("gzip")) : resp.body;
-    const reader = srcStream.pipeThrough(new TextDecoderStream()).getReader();
+    let reader;
+    if(isGz){
+      if(typeof DecompressionStream === "undefined" || typeof TextDecoderStream === "undefined"){
+        // iOS-Fallback: ganz in einen Blob laden (Blob liegt nicht im JS-Heap), dekomprimieren über Response
+        setStat("Dekomprimiere (iOS-Modus)...");
+        const blob = await new Response(new Blob([await resp.arrayBuffer()]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+        // Blob-Wege: über Response-Objekt dekomprimieren
+        reader = (function(){
+          const lines = blob.split("\n");
+          let i = 0;
+          return { read: async () => i < lines.length ? { done:false, value: lines[i++]+"\n" } : { done:true } };
+        })();
+      } else {
+        reader = resp.body.pipeThrough(new DecompressionStream("gzip")).pipeThrough(new TextDecoderStream()).getReader();
+      }
+    } else {
+      reader = resp.body.pipeThrough(new TextDecoderStream ? new TextDecoderStream() : new TransformStream()).getReader();
+    }
     while(true){
       const {done, value} = await reader.read();
       if(done) break;
@@ -587,37 +640,7 @@ async function downloadBulk(){
       }
     }
     if(buf.trim()){ try{ compact.push(compactCard(JSON.parse(buf.trim()))); }catch(e){} }
-    progress(.55);
-    setStat(compact.length+" Karten verarbeitet — lade deutsche Kartennamen (Such-API, ca. 30–60 s)...");
-    // Deutsche Name eindeutig pro Karte pro Karte
-    let deNames = {};
-    try{
-      let page = 1, hasMore = true, got = 0;
-      while(hasMore){
-        const data = await jfetch("https://api.scryfall.com/cards/search?q=" + encodeURIComponent("lang:de") + "&unique=card&order=name&dir=asc&page="+page);
-        (data.data||[]).forEach(c => { if(c.printed_name) deNames[c.oracle_id] = c.printed_name; });
-        got += (data.data||[]).length; hasMore = !!data.has_more; page++;
-        progress(.55 + .35*Math.min(1, got/26000));
-        setStat("Deutsche Namen: "+got.toLocaleString("de-DE")+" geladen...");
-        await new Promise(r=>setTimeout(r, 120)); // Scryfall-Ratelimit respektieren
-      }
-    }catch(e){ setStat("Deutsche Namen teilweise fehlgeschlagen ("+e.message+") — fahre trotzdem fort..."); }
-    progress(.92);
-    // de-Namen in die kompakten Karten einfügen (Suchindex erweitern)
-    let deCount = 0;
-    compact.forEach(cc => {
-      if(cc.oid && deNames[cc.oid] && !cc.de_name){
-        cc.de_name = deNames[cc.oid];
-        cc.full += " " + cc.de_name;
-        deCount++;
-      }
-    });
-    await idbSet("cards", compact);
-    cardDB = compact;
-    progress(1);
-    setStat("✓ "+cardDB.length.toLocaleString("de-DE")+" Karten gespeichert"+(deCount ? " (inkl. "+deCount.toLocaleString("de-DE")+" deutscher Namen)" : "")+".");
-    updateStatus();
-    toast("Kartendaten geladen: "+cardDB.length+" Karten");
+    await finishBulk(compact, setStat, full);
   }catch(e){
     $("bulkStatus").innerHTML = "⚠ Download fehlgeschlagen: "+esc(e.message)+"<br><span class=\"muted\">Die Live-Suche funktioniert weiterhin. Der Gegner-Generator benötigt die geladenen Kartendaten. Bei anhaltenden Problemen: Seite neu laden und erneut versuchen.</span>";
   }
