@@ -528,8 +528,25 @@ const SCRYFALL_BULK = "https://api.scryfall.com/bulk-data/default-cards"; // all
 function idb(){ return new Promise((res, rej) => { const r = indexedDB.open("mtgstudio", 1);
   r.onupgradeneeded = e => { const db = e.target.result; if(!db.objectStoreNames.contains("kv")) db.createObjectStore("kv"); };
   r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
-async function idbSet(k, v){ const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("kv","readwrite"); tx.objectStore("kv").put(v, k); tx.oncomplete = res; tx.onerror = ()=>rej(tx.error); }); }
-async function idbGet(k){ const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("kv","readonly"); const rq = tx.objectStore("kv").get(k); rq.onsuccess = ()=>res(rq.result); rq.onerror = ()=>rej(rq.error); }); }
+async function idbSet(k, v){
+  if(Array.isArray(v) && v.length > 15000){
+    const CH = 15000, chunks = Math.ceil(v.length/CH);
+    for(let i=0;i<chunks;i++){ await idbSetRaw(k+"_"+i, v.slice(i*CH, (i+1)*CH)); }
+    return idbSetRaw(k+"_count", chunks);
+  }
+  return idbSetRaw(k, v);
+}
+async function idbSetRaw(k, v){ const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("kv","readwrite"); tx.objectStore("kv").put(v, k); tx.oncomplete = res; tx.onerror = ()=>rej(tx.error); }); }
+async function idbGet(k){
+  const count = await idbGetRaw(k+"_count");
+  if(count && count > 0){
+    const parts = [];
+    for(let i=0;i<count;i++) parts.push(await idbGetRaw(k+"_"+i));
+    return parts.flat();
+  }
+  return idbGetRaw(k);
+}
+async function idbGetRaw(k){ const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("kv","readonly"); const rq = tx.objectStore("kv").get(k); rq.onsuccess = ()=>res(rq.result); rq.onerror = ()=>rej(rq.error); }); }
 async function idbDel(k){ const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("kv","readwrite"); tx.objectStore("kv").delete(k); tx.oncomplete = res; tx.onerror = ()=>rej(tx.error); }); }
 
 async function downloadBulk(){
@@ -678,7 +695,7 @@ function bulkSearch(query, page){
   let total = 0;
   for(const c of cardDB){
     let ok = true;
-    if(freeText && !c.full.toLowerCase().includes(freeText)) ok = false;
+    if(freeText && !c.full.toLowerCase().includes(freeText) && !(c.oracle||"").toLowerCase().includes(freeText)) ok = false;
     if(ok && fType && !c.type_line.toLowerCase().includes(fType)) ok = false;
     if(ok && fO && !c.oracle.toLowerCase().includes(fO)) ok = false;
     if(ok && fR && c.rarity !== fR) ok = false;
@@ -884,7 +901,19 @@ function importRulesFile(inp){
 "use strict";
 /* ================= Decks ================= */
 function allDecks(){ try{ return JSON.parse(localStorage.getItem("mtg_decks")||"[]"); }catch(e){ return []; } }
-function saveDecks(decks){ localStorage.setItem("mtg_decks", JSON.stringify(decks)); refreshDeckSelect(); }
+function saveDecks(decks){ localStorage.setItem("mtg_decks", JSON.stringify(decks)); refreshDeckSelect(); idbSet("decks_backup", decks).catch(()=>{}); }
+async function restoreDecksBackup(){
+  try{
+    const saved = localStorage.getItem("mtg_decks");
+    if(saved && JSON.parse(saved).length) return;
+    const backup = await idbGet("decks_backup");
+    if(backup && backup.length){
+      localStorage.setItem("mtg_decks", JSON.stringify(backup));
+      refreshDeckSelect(); loadDeckToUI();
+      toast("✓ Decks aus Backup wiederhergestellt ("+backup.length+" Decks).");
+    }
+  }catch(e){}
+}
 let currentDeckId = null;
 
 function refreshDeckSelect(){
@@ -1594,6 +1623,7 @@ function updateStatus(){
 
 (async function init(){
   refreshDeckSelect(); loadDeckToUI();
+  restoreDecksBackup();
   // load rules from cache or net
   await loadRules(false);
   // load card db from IndexedDB
