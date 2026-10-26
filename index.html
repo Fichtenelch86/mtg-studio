@@ -146,6 +146,7 @@ mark { background: #6b5a1e; color: #ffe9a8; border-radius: 2px; }
     <div class="row">
       <input id="q" style="flex:1; min-width:220px" placeholder="Suche (Name, Kartentext, Scryfall-Syntax z.B. t:creature o:flying c>2)...">
       <button class="primary" onclick="runSearch()">Suchen</button>
+      <label style="display:flex;align-items:center;gap:6px;white-space:nowrap"><input type="checkbox" id="allPrintsChk" onchange="toggleAllPrints(this)" style="width:auto"> Alle Editionen</label>
     </div>
     <details style="margin-top:10px">
       <summary class="muted" style="cursor:pointer">Filter (alle Kriterien)</summary>
@@ -441,7 +442,8 @@ async function runSearch(){
       $("searchInfo").textContent = res.cards.length + " von " + res.total + " Treffern (Seite 1)";
       $("moreBtn").classList.toggle("hidden", res.cards.length >= res.total);
     } else {
-      const data = await jfetch("https://api.scryfall.com/cards/search?q=" + encodeURIComponent(query) + "&unique=prints&order=name&page=1");
+      const uniq = $("allPrintsChk") && $("allPrintsChk").checked ? "prints" : "card";
+      const data = await jfetch("https://api.scryfall.com/cards/search?q=" + encodeURIComponent(query) + "&unique="+uniq+"&order=name&page=1");
       searchResultCache = data.data; searchPage = 1; inBulkMode = false;
       renderCards(data.data);
       $("searchInfo").textContent = data.data.length + " von " + data.total_cards + " Treffern";
@@ -467,7 +469,8 @@ async function pageMore(){
       $("moreBtn").classList.toggle("hidden", searchResultCache.length >= res.total);
     } else {
       searchPage++;
-      const data = await jfetch("https://api.scryfall.com/cards/search?q=" + encodeURIComponent(query) + "&unique=prints&order=name&page="+searchPage);
+      const uniq = $("allPrintsChk") && $("allPrintsChk").checked ? "prints" : "card";
+      const data = await jfetch("https://api.scryfall.com/cards/search?q=" + encodeURIComponent(query) + "&unique="+uniq+"&order=name&page="+searchPage);
       searchResultCache = searchResultCache.concat(data.data);
       renderCards(searchResultCache);
       $("moreBtn").classList.toggle("hidden", !data.has_more);
@@ -569,6 +572,8 @@ function clearFilters(){
 
 /* ================= Bulk card DB (IndexedDB) ================= */
 let cardDB = [];
+let showAllPrints = false;
+function toggleAllPrints(cb){ showAllPrints = cb.checked; if($("q").value) runSearch(); }
 const SCRYFALL_BULK = "https://api.scryfall.com/bulk-data/default-cards"; // all prints incl. all criteria
 function idb(){ return new Promise((res, rej) => { const r = indexedDB.open("mtgstudio", 1);
   r.onupgradeneeded = e => { const db = e.target.result; if(!db.objectStoreNames.contains("kv")) db.createObjectStore("kv"); };
@@ -822,9 +827,24 @@ function bulkSearch(query, page){
       if(t === null) ok = false;
       else { const n = parseFloat(fTou[2]); if(fTou[1] === ">=" ? !(t >= n) : fTou[1] === "<=" ? !(t <= n) : t !== n) ok = false; }
     }
-    if(ok){ total++; if(cards.length < page*PER && total > (page-1)*PER) cards.push(toFull(c)); }
+    if(ok){
+      // Deduplizierung: pro Kartenname nur der NEUESTE Druck (Standard, uebersichtlich).
+      // Ausnahme: Editions-Filter (e:) -- dann explizit alle Drucke dieser Edition.
+      if(!fE && !showAllPrints){
+        const ex = cards.find(x => x.name === c.name);
+        if(ex){
+          if((c.released||"") > (ex._released||"")){
+            const idx = cards.indexOf(ex);
+            cards[idx] = toFull(c); cards[idx]._released = c.released || "";
+          }
+          continue; // aelterer Druck ersetzt/verworfen
+        }
+      }
+      total++; if(cards.length < page*PER && total > (page-1)*PER){ const f = toFull(c); f._released = c.released || ""; cards.push(f); }
+    }
   }
-  return { cards, total };
+  if(page > 1) return { cards: cards.slice((page-1)*PER, page*PER), total };
+  return { cards: cards.slice(0, PER), total };
 }
 function toFull(c){ // re-add fields expected by renderers
   return { id: c.id, name: c.name, set: c.set, set_name: c.set_name, rarity: c.rarity, cmc: c.cmc,
