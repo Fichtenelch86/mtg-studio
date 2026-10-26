@@ -207,6 +207,15 @@ mark { background: #6b5a1e; color: #ffe9a8; border-radius: 2px; }
       <input id="ruleQ" style="flex:1" placeholder="Regelnummer (z.B. 702.9) oder Volltextsuche (z.B. 'flying', 'mulligan', 'state-based')...">
       <button class="primary" onclick="searchRules()">Nachschlagen</button>
     </div>
+    <div class="panel" style="margin-top:10px;background:#232735">
+      <h3>❓ Regelfrage stellen (mit offiziellen Rulings)</h3>
+      <p class="muted">Frage auf Deutsch oder Englisch eingeben — die App durchsucht das Regelwerk und die offiziellen Kartenerklärungen (Rulings, falls geladen bzw. per Live-Abfrage) und zeigt die relevanten Stellen. Beispiele: „Kann ich mit einer Kreatur angreifen, die gerade ins Spiel gekommen ist?“, „Was passiert bei 0 Leben?“, „Kann ich einen Zauber wirken, während einer auf dem Stack liegt?“</p>
+      <div class="row">
+        <input id="ruleQuestion" style="flex:1" placeholder="Deine Regelfrage...">
+        <button class="primary" onclick="answerRuleQuestion()">Frage beantworten</button>
+      </div>
+      <div id="ruleAnswer" style="margin-top:10px"></div>
+    </div>
     <div class="row" style="margin-top:10px">
       <select id="ruleChapter" onchange="browseChapter()">
         <option value="">Kapitel wählen...</option>
@@ -512,9 +521,39 @@ function showCard(id){
     + '<input type="number" id="addQty" value="1" min="1" max="99" style="width:60px">'
     + '<button class="primary" onclick="addToDeckFromModal(\''+c.id+'\')">Ins Deck</button>'
     + '<a href="'+c.scryfall_uri+'" target="_blank">Scryfall ↗</a>'
-    + '</div>';
+    + '<button onclick="loadCardRulings(\''+c.id+'\')">📜 Regelerklärungen (Rulings)</button>'
+    + '</div><div id="rulingsBox" style="margin-top:10px"></div>';
   $("modal").classList.add("open");
 }
+async function loadCardRulings(id){
+  const c = searchResultCache.find(x=>x.id===id);
+  const box = $("rulingsBox");
+  if(!c || !box) return;
+  box.innerHTML = '<p class="muted">Lade Rulings…</p>';
+  try{
+    // Karten-ID kann bei Bulk-Karten die Scryfall-ID sein; bei kompakt ggf. URI
+    let cardId = c.id;
+    if(c.uri){ const m = c.uri.match(/cards\/([0-9a-f]{8,})\//); if(m) cardId = m[1]; }
+    const data = await jfetch("https://api.scryfall.com/cards/"+cardId+"/rulings");
+    const rl = (data.data||[]);
+    box.innerHTML = rl.length
+      ? '<h3>📜 Offizielle Rulings:</h3>' + rl.map(r =>
+          '<div class="ruleItem"><span class="ruleNum muted">'+esc(r.published_at)+'</span> '+esc(r.comment)+'</div>').join("")
+      : '<p class="muted">Keine Rulings zu dieser Karte hinterlegt.</p>';
+  }catch(e){
+    // Fallback: Karte per Namen suchen
+    try{
+      const card = await jfetch("https://api.scryfall.com/cards/named?fuzzy=" + encodeURIComponent(c.name));
+      const data = await jfetch("https://api.scryfall.com/cards/"+card.id+"/rulings");
+      const rl = (data.data||[]);
+      box.innerHTML = rl.length
+        ? '<h3>📜 Offizielle Rulings:</h3>' + rl.map(r =>
+            '<div class="ruleItem"><span class="ruleNum muted">'+esc(r.published_at)+'</span> '+esc(r.comment)+'</div>').join("")
+        : '<p class="muted">Keine Rulings zu dieser Karte hinterlegt.</p>';
+    }catch(e2){ box.innerHTML = '<p class="muted">⚠ Rulings konnten nicht geladen werden ('+esc(e2.message)+').</p>'; }
+  }
+}
+
 function closeModal(){ $("modal").classList.remove("open"); }
 function addToDeckFromModal(id){
   const c = searchResultCache.find(x=>x.id===id);
@@ -912,6 +951,225 @@ function browseChapter(){
   $("rulesBrowseTitle").textContent = ch.num + ". " + ch.title;
   box.innerHTML = rules.rules.filter(r => r.chapter === num).map(r =>
     '<div class="ruleItem"><span class="ruleNum">'+r.num+'</span>'+esc(r.text).replace(/\n/g,"<br>")+'</div>').join("");
+}
+
+/* ================= Regelfrage-Engine ================= */
+const RULE_KEYWORDS = {
+  // Deutsch → Regelbegriffe (englisch, wie im Regelwerk)
+  "angreifen": ["attack", "508", "302.6", "summoning"],
+  "attack": ["attack", "508", "302.6", "summoning"],
+  "gerade ins spiel": ["302.6", "summoning", "haste", "attack"],
+  "gerade gekommen": ["302.6", "summoning", "haste", "attack"],
+  "einsatzverzögerung": ["302.6", "summoning", "haste"],
+  "hast": ["haste", "702.10"],
+  "blocken": ["block", "509", "blocking"],
+  "block": ["block", "509", "blocking"],
+  "fliegen": ["flying", "702.9", "reach"],
+  "fliegend": ["flying", "702.9", "reach"],
+  "flying": ["flying", "702.9", "reach"],
+  "trampeln": ["trample", "702.19"],
+  "trample": ["trample", "702.19"],
+  "null leben": ["0 or less life", "104.3b", "loses the game", "life total"],
+  "0 leben": ["0 or less life", "104.3b", "loses the game", "life total"],
+  "leben": ["life", "119", "life total"],
+  "life": ["life", "119", "life total"],
+  "tod": ["dies", "put into a graveyard", "death"],
+  "sterben": ["dies", "put into a graveyard", "death"],
+  "karten ziehen": ["draw", "121", "drawing a card"],
+  "ziehen": ["draw", "121", "drawing a card"],
+  "draw": ["draw", "121", "drawing a card"],
+  "zauber": ["cast", "601", "spell"],
+  "wirken": ["cast", "601", "spell"],
+  "stack": ["stack", "405", "priority", "117"],
+  "priorität": ["priority", "117", "stack"],
+  "priority": ["priority", "117", "stack"],
+  "mulligan": ["mulligan", "103.5"],
+  "mulligan ziehen": ["mulligan", "103.5"],
+  "mana": ["mana", "106", "mana pool"],
+  "länder": ["land", "305", "land drop"],
+  "land spielen": ["land", "305.2", "one land"],
+  "ein land pro": ["305.2", "one land per turn"],
+  "land": ["land", "305"],
+  "opfern": ["sacrifice", "701.2"],
+  "sacrifice": ["sacrifice", "701.2"],
+  "exil": ["exile", "406"],
+  "counter": ["counter", "701.5", "counters", "122"],
+  "marke": ["counter", "122", "counters"],
+  "Token": ["token", "111", "tokens"],
+  "token": ["token", "111", "tokens"],
+  "verursachten schaden": ["damage", "120", "dealt"],
+  "schaden": ["damage", "120", "dealt"],
+  "damage": ["damage", "120", "dealt"],
+  "protection": ["protection", "702.16"],
+  "schutz": ["protection", "702.16"],
+  "regeneration": ["regenerate", "701.19"],
+  "wiederbelebung": ["regenerate", "701.19"],
+  "doppelter schlag": ["double strike", "702.4"],
+  "erster schlag": ["first strike", "702.7"],
+  "tap": ["tap", "untap", "502", "107.4a"],
+  "tappen": ["tap", "untap", "502"],
+  "verwandeln": ["transform", "712", "double-faced"],
+  "transform": ["transform", "712", "double-faced"],
+  "zykluseffekt": ["cycle", "702.29"],
+  "landschaft": ["land", "305"],
+  "friedhof": ["graveyard", "404"],
+  "graveyard": ["graveyard", "404"],
+  "bibliothek": ["library", "401"],
+  "library": ["library", "401"],
+  "hand": ["hand", "402"],
+  "handkarten": ["hand", "402"],
+  "verlust": ["lose", "loses the game", "104"],
+  "verlieren": ["lose", "loses the game", "104"],
+  "gewinnen": ["win", "wins the game", "104"],
+  "concede": ["concede", "104.3a"],
+  "aufgeben": ["concede", "104.3a"],
+  "ebenenbild": ["battle", "310"],
+  "kampf": ["battle", "310", "combat", "506"],
+  "combat": ["combat", "506"],
+  "planeswalker": ["planeswalker", "306"],
+  "planeschanger": ["planeswalker", "306"],
+  "loyalität": ["loyalty", "306", "209"],
+  "enchantment": ["enchantment", "303"],
+  "verzauberung": ["enchantment", "303"],
+  "artefakt": ["artifact", "301"],
+  "artifact": ["artifact", "301"],
+  "kreatur": ["creature", "302"],
+  "creature": ["creature", "302"],
+  "sorcery": ["sorcery", "307"],
+  "spontanzauber": ["instant", "304"],
+  "instant": ["instant", "304"],
+  "zauberspruch": ["sorcery", "307"],
+  "aura": ["aura", "303.4"],
+  "equipment": ["equipment", "301.5"],
+  "ausrüstung": ["equipment", "301.5"],
+  "epic": ["epic", "702.90"],
+  "kampfschaden": ["combat damage", "510", "509"],
+  "kampffähigkeit": ["attack", "302.6"],
+  "legal": ["legal", "100.2"],
+  "format": ["format", "100.2"],
+  "commander": ["commander", "903"],
+  "zweifarbige": ["hybrid", "107.4a"],
+  "hybrid": ["hybrid", "107.4a"],
+  "phyrexian": ["phyrexian", "107.4a"],
+  "produzieren": ["add", "mana", "106"],
+  "erzeugen": ["add", "mana", "106"],
+  "herbeirufen": ["summon", "cast", "601"],
+  "kopieren": ["copy", "707", "copies"],
+  "copy": ["copy", "707"],
+  "legende": ["legendary", "legend", "704.5"],
+  "legendary": ["legendary", "legend", "704.5"],
+  "doppelte karte": ["double-faced", "712"],
+  "zweiseitig": ["double-faced", "712"],
+  "saga": ["saga", "714"],
+  "klasse": ["class", "716"],
+  "initiative": ["initiative", "726"],
+  "monarch": ["monarch", "725"],
+  "untergrund": ["dungeon", "309"],
+  "dungeon": ["dungeon", "309"],
+  "gift": ["poison", "104.3d", "poison counters"],
+  "poison": ["poison", "104.3d"],
+  "rad": ["rad", "728"],
+  "strahlend": ["rad", "728"],
+  "daybound": ["daybound", "712", "transform"],
+  "nightbound": ["nightbound", "712", "transform"],
+  "werwolf": ["transform", "712", "daybound", "nightbound"],
+  "sticker": ["sticker", "123"],
+  "companion": ["companion", "702.139"],
+  "partner": ["partner", "702.124", "commander"],
+  "foretell": ["foretell", "702.141"],
+  "verheißen": ["foretell", "702.141"],
+  "kicker": ["kicker", "702.32"],
+  "multikicker": ["kicker", "702.32"],
+  "madness": ["madness", "702.34"],
+  "wahnsinn": ["madness", "702.34"],
+  "flashback": ["flashback", "702.33"],
+  "ruckblende": ["flashback", "702.33"],
+  "_delays": ["delayed", "603.7"],
+};
+
+function answerRuleQuestion(){
+  const q = ($("ruleQuestion").value || "").trim();
+  const box = $("ruleAnswer");
+  if(!q){ box.innerHTML = '<p class="muted">Bitte eine Frage eingeben.</p>'; return; }
+  box.innerHTML = '<p class="muted">Suche im Regelwerk und in den Rulings…</p>';
+
+  // 1) Regel-Keywords aus der Frage extrahieren (Deutsch + Englisch)
+  const qLower = q.toLowerCase();
+  const keywords = new Set();
+  for(const [phrase, terms] of Object.entries(RULE_KEYWORDS)){
+    if(qLower.includes(phrase)) terms.forEach(t => keywords.add(t));
+  }
+  // 2) Nicht erkannte Wörter als Fallback direkt im Regelwerk suchen
+  const tokens = qLower.split(/[^a-z0-9äöüß.]+/).filter(w => w.length > 3);
+
+  // 3) Regelwerk durchsuchen: erst keyword-basiert, dann token-basiert
+  let hits = [];
+  if(rules && rules.rules){
+    const score = rule => {
+      let s = 0;
+      const txt = rule.text.toLowerCase();
+      for(const kw of keywords){
+        if(txt.includes(kw.toLowerCase())) s += 10;
+        if(rule.num === kw) s += 20;
+        if(rule.num.startsWith(kw + ".")) s += 15;
+      }
+      for(const t of tokens){ if(txt.includes(t)) s += 1; }
+      return s;
+    };
+    hits = rules.rules.map(r => ({ r, s: score(r) })).filter(h => h.s > 0)
+      .sort((a,b) => b.s - a.s).slice(0, 5).map(h => h.r);
+  }
+
+  let html = "";
+  if(hits.length){
+    html += '<h3>Gefundene Regeln:</h3>' + hits.map(rule =>
+      '<div class="ruleItem"><span class="ruleNum">'+rule.num+'</span>'+esc(rule.text).replace(/\n/g,"<br>")+'</div>').join("");
+  }
+
+  // 4) Rulings: Kartennamen in der Frage finden und deren Rulings live laden
+  const cardNames = extractCardNames(q);
+  const rulingsPromises = cardNames.map(name => fetchRulings(name));
+  Promise.all(rulingsPromises).then(results => {
+    let rHtml = "";
+    results.forEach(res => {
+      if(res && res.rulings && res.rulings.length){
+        rHtml += '<h3 style="margin-top:12px">Offizielle Rulings zu „'+esc(res.name)+'“:</h3>'
+          + res.rulings.map(rl => '<div class="ruleItem"><span class="ruleNum muted">'+esc(rl.published_at)+'</span> '+esc(rl.comment)+'</div>').join("");
+      }
+    });
+    if(!hits.length && !rHtml){
+      box.innerHTML = '<p class="muted">⚠ Keine passenden Regeln oder Rulings gefunden. Tipp: Frage umformulieren (z.B. Stichwort wie „angreifen“, „blocken“, „Mulligan“, „Landschaft“) oder Kartenname nennen.</p>';
+    } else {
+      box.innerHTML = html + rHtml;
+    }
+  }).catch(() => {
+    box.innerHTML = html || '<p class="muted">⚠ Keine Treffer gefunden. Tipp: Stichwörter wie „angreifen“, „blocken“ oder Kartenname verwenden.</p>';
+  });
+}
+
+function extractCardNames(q){
+  // Kartennamen aus der Frage: Wörter mit Großbuchstaben oder bekannte Namen aus cardDB
+  const names = new Set();
+  // 1) Karten in Anführungszeichen
+  const quoted = q.match(/[„"']([^‟"']{3,60})[‟"']/g) || [];
+  quoted.forEach(m => { const n = m.replace(/[„‟"']/g,"").trim(); if(n) names.add(n); });
+  // 2) Übereinstimmungen mit geladenen Kartennamen (Wortfolgen)
+  if(cardDB && cardDB.length){
+    const qLower = q.toLowerCase();
+    for(const c of cardDB){
+      if(c.name.length > 3 && qLower.includes(c.name.toLowerCase())){ names.add(c.name); if(names.size >= 3) break; }
+    }
+  }
+  return [...names];
+}
+
+async function fetchRulings(name){
+  try{
+    const card = await jfetch("https://api.scryfall.com/cards/named?fuzzy=" + encodeURIComponent(name));
+    if(!card.id) return null;
+    const data = await jfetch("https://api.scryfall.com/cards/"+card.id+"/rulings");
+    return { name: card.name, rulings: (data.data||[]).slice(0, 5) };
+  }catch(e){ return null; }
 }
 
 function searchRules(){
@@ -1334,11 +1592,36 @@ function nextPhase(){
     game.phase = 4;
     const myAtk = game.battlefield.filter(p => p.kind==="perm" && p.attacking);
     if(myAtk.length){
-      const dmg = myAtk.reduce((s,a)=>s+(+a.pow||0),0);
       myAtk.forEach(a=>a.attacking=false);
       if(game.opp){
+        // Vereinfachte KI-Blocker: Gegner blockt den stärksten unblockbaren Angreifer mit seiner besten legalen Kreatur (Regel 702.9b für Fliegend)
+        let dmg = myAtk.reduce((s,a)=>s+(+a.pow||0),0);
+        const oppBlockers = game.opp.battlefield.filter(p => p.kind==="perm" && (p.type_line||"").includes("Creature") && !p.tapped);
+        const usedOpp = new Set();
+        for(const a of myAtk){
+          if(!oppBlockers.length) break;
+          const legal = oppBlockers.filter(b => !usedOpp.has(b) && canBlock(a, b));
+          if(!legal.length) continue;
+          // KI: blockt nur, wenn Blocker den Angreifer tötet oder selbst überlebt
+          const best = legal.map(b => ({ b, die: (+b.pow||0) >= (+a.tou||0) })).sort((x,y) => (y.die?1:0)-(x.die?1:0))[0];
+          if(!best) continue;
+          const kills = (+best.b.pow||0) >= (+a.tou||0);
+          const survives = (+a.pow||0) < (+best.b.tou||0);
+          if(kills || survives){
+            usedOpp.add(best.b);
+            const aDmg = +a.pow||0, bDmg = +best.b.pow||0;
+            let aDied = bDmg >= (+a.tou||0), bDied = aDmg >= (+best.b.tou||0);
+            dmg -= aDmg;
+            if(bDied){ const i = game.opp.battlefield.indexOf(best.b); if(i>=0){ game.opp.battlefield.splice(i,1); game.opp.graveyard.push(best.b); } }
+            if(aDied){ const i = game.battlefield.indexOf(a); if(i>=0){ game.battlefield.splice(i,1); game.graveyard.push(a); } }
+            const tr = trampleDamage(a, best.b);
+            if(tr > 0) dmg += tr;
+            log("🤖 Gegner blockt "+a.name+" mit "+best.b.name+(tr > 0 ? " — Trampeln: "+tr+" Schaden gehen durch" : "")+".");
+          }
+        }
+        dmg = Math.max(0, dmg);
         game.opp.life -= dmg;
-        log("⚔ Deine "+myAtk.length+" Angreifer fügen dem Gegner "+dmg+" Schaden zu — Gegner-Leben: "+game.opp.life+" (Regel 510.2, vereinfacht: Gegner blockt nicht).");
+        log("⚔ Deine Angreifer fügen dem Gegner "+dmg+" Schaden zu — Gegner-Leben: "+game.opp.life+" (Regel 510.2, vereinfachte Blocker-KI).");
         myAtk.forEach(a => applyLifelink(a, (+a.pow||0), false));
         checkGameEnd();
       } else log("⚔ Goldfisch: "+myAtk.length+" Angreifer hätten "+dmg+" Schaden verursacht.");
@@ -1614,6 +1897,21 @@ function oppTurn(){
   o.manaPool = [];
   renderPlay();
 }
+/* ===== Kampf-Fähigkeiten (vereinfachte Auswertung) ===== */
+function hasAbility(p, ab){ return (p.oracle||"").toLowerCase().includes(ab) || (p.keywords||[]).some(k => k.toLowerCase() === ab); }
+/* Ein Angreifer mit Fliegend kann nur von Blockern mit Fliegend/Reichweite geblockt werden (Regel 702.9b) */
+function canBlock(attacker, blocker){
+  const aFlying = hasAbility(attacker, "flying");
+  if(!aFlying) return true;
+  return hasAbility(blocker, "flying") || hasAbility(blocker, "reach");
+}
+/* Trampeln: überschüssiger Schaden geht an den Spieler (Regel 702.19) */
+function trampleDamage(attacker, blocker){
+  if(!hasAbility(attacker, "trample") || !blocker) return null;
+  const pow = +attacker.pow || 0, blkTou = +blocker.tou || 0;
+  return Math.max(0, pow - blkTou);
+}
+
 function oppResolveCombat(attackers){
   // Blocker-Deklaration (vereinfacht): Jede deiner Kreaturen kann nur EINEN Angreifer blocken (Regel 509.1a).
   // Getappte Kreaturen dürfen blocken (Regel 509.1a: Tappen ist kein Block-Hindernis).
@@ -1621,7 +1919,7 @@ function oppResolveCombat(attackers){
   const available = game.battlefield.filter(p => p.kind==="perm" && (p.type_line||"").includes("Creature") && !p.attacking);
   const used = new Set();
   for(const atk of attackers){
-    const blockers = available.filter(b => !used.has(b));
+    const blockers = available.filter(b => !used.has(b) && canBlock(atk, b));
     let blocked = null;
     if(blockers.length){
       const opts = blockers.map((b,i)=>(i+1)+") "+b.name+" ("+b.pow+"/"+b.tou+")").join("\n");
@@ -1635,12 +1933,14 @@ function oppResolveCombat(attackers){
       const atkDmg = +atk.pow || 0, blkDmg = +blocked.pow || 0;
       const blkTou = +blocked.tou || 0, atkTou = +atk.tou || 0;
       log("⚔ "+blocked.name+" ("+blkDmg+"/"+blkTou+") blockt "+atk.name+" ("+atkDmg+"/"+atkTou+").");
-      // Verteilung vereinfacht: simultaner Schaden (Regel 510.2)
       let blockerDied = atkDmg >= blkTou;
       let attackerDied = blkDmg >= atkTou;
       if(blockerDied){ game.battlefield = game.battlefield.filter(p => p !== blocked); game.graveyard.push(blocked); log("✖ Dein Blocker "+blocked.name+" stirbt (Regel 704.5g vereinfacht)."); }
       if(attackerDied){ const oi = game.opp.battlefield.indexOf(atk); if(oi>=0){ game.opp.battlefield.splice(oi,1); game.opp.graveyard.push(atk); } log("✔ Angreifer "+atk.name+" stirbt."); }
-      if(!blockerDied && !attackerDied) log("— Beide überleben (Schaden wird bis Zugende vereinfacht ignoriert).");
+      if(!blockerDied && !attackerDied) log("— Beide überleben (Schaden bis Zugende vereinfacht ignoriert).");
+      // Trampeln: überschüssiger Schaden geht an dich (Regel 702.19b)
+      const tr = trampleDamage(atk, blocked);
+      if(tr > 0){ totalDmg += tr; log("→ "+atk.name+" hat Trampeln: "+tr+" Schaden gehen an dich durch (Regel 702.19b)."); }
     } else {
       totalDmg += +atk.pow || 0;
     }
