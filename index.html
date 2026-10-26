@@ -847,7 +847,7 @@ let rules = { version: null, chapters: [], rules: [], glossary: [] };
 function parseRules(txt){
   const out = { chapters: [], rules: [], glossary: [] };
   const lines = txt.replace(/\r/g, "").split("\n");
-  let chapter = null;
+  let chapter = null, inGlossary = false;
   const chapHead = /^(\d)\.\s+([A-Z][^\n]*)$/;
   const ruleNum = /^(\d{3})\.(\d+)([a-z]?)\.?\s*(.*)$/;
   const subHead = /^(\d{3})\.\s+([A-Z][^\n]{2,60})$/;
@@ -855,12 +855,14 @@ function parseRules(txt){
   for(let ln of lines){
     ln = ln.trim();
     if(!ln) continue;
-    if(ln === "Glossary"){
+    if(/^glossary\s*$/i.test(ln) || /^\u201eglossary/i.test(ln)){
       if(!out.chapters.some(c=>c.num==="G")){ chapter = { num: "G", title: "Glossary", subs: [] }; out.chapters.push(chapter); }
       else chapter = out.chapters.find(c=>c.num==="G");
+      inGlossary = true;
       continue;
     }
-    if(ln === "Credits" || ln.startsWith("These rules are effective")) continue;
+    if(/^credits\s*$/i.test(ln)){ continue; }
+    if(ln.startsWith("These rules are effective")) continue;
     const ch = ln.match(chapHead);
     if(ch && !/^\d/.test(ch[2])){
       const existing = out.chapters.find(c => c.num === ch[1] && c.title === ch[2]);
@@ -878,7 +880,22 @@ function parseRules(txt){
       out.rules.push({ num: r[1]+"."+r[2]+(r[3]||""), text: r[4]||"", chapter: chapter ? chapter.num : null });
       continue;
     }
-    // glossary mode: collect definitions
+    // Glossar-Heuristik: Zeilen ohne Ziffern, gefolgt von "See rule"-Text → Glossar-Modus erzwingen
+    if(!inGlossary && out.rules.length && /^[A-Za-z][A-Za-z'\u2019()\-]*$/.test(ln) && ln.length < 40){
+      // kurzer Begriff — prüfen ob nächste nicht-leere Zeile eine Definition ist
+      // (wird beim nächsten Schleifendurchlauf als continuation erkannt; hier: nur Flag setzen wenn wir nach Kapitel 9 sind)
+      const lastNum = out.rules[out.rules.length-1].num;
+      if(lastNum.startsWith("9") && !/^\d/.test(ln)){ chapter = { num: "G", title: "Glossary", subs: [] }; if(!out.chapters.some(c=>c.num==="G")) out.chapters.push(chapter); inGlossary = true; }
+    }
+    if(inGlossary && !/^\d{3}\.\d/.test(ln) && !/^\d\.\s/.test(ln)){
+      if(glossTerm.test(ln) && ln.length < 60 && !/^\d/.test(ln)){
+        out.glossary.push({ term: ln, def: "" });
+      } else if(out.glossary.length){
+        const last = out.glossary[out.glossary.length-1];
+        last.def += (last.def ? " " : "") + ln;
+      }
+      continue;
+    }
     if(chapter && chapter.num === "G"){
       if(glossTerm.test(ln) && ln.length < 60 && !/^\d/.test(ln)){
         out.glossary.push({ term: ln, def: "" });
@@ -892,7 +909,17 @@ function parseRules(txt){
     if(out.rules.length){
       const prev = out.rules[out.rules.length-1];
       if(/^\d/.test(ln) && chapter === null) continue; // TOC remnant
-      prev.text += " " + ln;
+      // Guard: verschluckte Regelnummern im Text (z.B. "120.2aDamage...") als eigene Regel parsen
+      const hidden = ln.match(/^(\d{3})\.(\d+)([a-z]?)\.?\s*(.*)$/);
+      if(hidden && hidden[4].length > 20){
+        out.rules.push({ num: hidden[1]+"."+hidden[2]+(hidden[3]||""), text: hidden[4], chapter: chapter ? chapter.num : null });
+        continue;
+      }
+      // Guard: kein Anhang \u00fcber 2000 Zeichen; Glossar-typische Zeilen stoppen den Anhang
+      const glossStop = /^[A-Z][a-z]{2,20}$/.test(ln) || /^(?:To|A|An|The)\s/.test(ln);
+      if(!glossStop && (prev.text.length + ln.length) < 2000 && !/^(?:Magic: The Gathering|Original Game Design|\u00a9)/.test(ln)){
+        prev.text += " " + ln;
+      }
     }
   }
   // dedupe rules (TOC may create none, but safety)
@@ -1087,6 +1114,37 @@ const RULE_KEYWORDS = {
   "_delays": ["delayed", "603.7"],
 };
 
+function generateRuleAnswer(q, hits){
+  if(!hits || !hits.length) return null;
+  const qLower = q.toLowerCase();
+  // Versuch 1: Häufige Frage-Muster mit geprüften, vorformulierten Antworten
+  const PATTERN_ANSWERS = [
+    { t: (/angreifen|attack/.test(qLower)) && (/gerade|ins spiel|gekommen|summoning|einsatzverz/.test(qLower)),
+      answer: "Nein. Eine Kreatur kann erst angreifen, wenn sie seit dem Beginn deines letzten Zugs ununterbrochen unter deiner Kontrolle war („Einsatzverzögerung“, Regel 302.6). Ausnahme: Mit Hast (Regel 702.10) darf sie sofort angreifen." },
+    { t: (/trampeln|trample/.test(qLower)) && (/verhinder|prevent/.test(qLower)),
+      answer: "Beim Zuweisen des Kampfschadens musst du zunächst trotzdem tödlichen Schaden auf den Blocker ansetzen (Regel 702.19b). Schadensprävention (Regel 615) greift erst bei der Ausführung des Schadens — sie ändert nichts an der Zuweisung. Der überschüssige Schaden geht also trotzdem auf den verteidigenden Spieler über, selbst wenn der Blocker den Schaden an sich verhindert: Gezählt wird der zugewiesene, nicht der tatsächlich verursachte Schaden (Regeln 702.19, 510.1, 615.1)." },
+    { t: (/blocken|block/.test(qLower)) && (/getappt|tapped/.test(qLower)),
+      answer: "Ja, getappte Kreaturen dürfen blocken. Tappen ist keine Voraussetzung fürs Blocken (Regel 509.1a) — anders als beim Angriff (Regel 508.1a)." },
+    { t: /null leben|0 leben|lebenspunkte auf 0/.test(qLower),
+      answer: "Bei 0 oder weniger Leben verlierst du das Spiel, sobald das nächste Mal ein Spieler Priorität erhält (Regel 104.3b — zustandsbasierte Aktion)." },
+    { t: /zwei länder|mehr länder|zwei land/.test(qLower),
+      answer: "Normalerweise nur ein Land pro Zug (Regel 305.2a). Mehr nur mit Effekten wie „you may play an additional land“." },
+    { t: (/fliegend|flying/.test(qLower)) && (/blocken|block/.test(qLower)),
+      answer: "Fliegende Kreaturen können nur von Kreaturen mit Fliegend oder Reichweite geblockt werden (Regel 702.9b)." },
+    { t: /stack/.test(qLower) && (/zauber|wirken|während/.test(qLower)),
+      answer: "Ja: Spontanzauber (Instants) kannst du jederzeit wirken, wenn du Priorität hast — auch während andere Zauber auf dem Stack liegen (Regeln 117, 304). Last In, First Out." },
+    { t: /mulligan/.test(qLower),
+      answer: "Beim Mulligan legst du eine Karte pro genommenem Mulligan unter die Bibliothek (London-Mulligan, Regel 103.5): Hand zurück, neu ziehen, dann pro Mulligan eine Karte nach unten legen." },
+  ];
+  for(const p of PATTERN_ANSWERS){ if(p.t) return p.answer; }
+  // Versuch 2: Kurzzusammenfassung aus dem besten Regeltext
+  const main = hits[0];
+  const others = hits.slice(1, 3).map(r => r.num).join(", ");
+  let txt = main.text.replace(/\s+/g," ").trim();
+  if(txt.length > 280) txt = txt.slice(0, 277) + "…";
+  return "Nach Regel " + main.num + ": " + txt + (others ? " (siehe auch " + others + ")" : "");
+}
+
 function answerRuleQuestion(){
   const q = ($("ruleQuestion").value || "").trim();
   const box = $("ruleAnswer");
@@ -1120,10 +1178,17 @@ function answerRuleQuestion(){
       .sort((a,b) => b.s - a.s).slice(0, 5).map(h => h.r);
   }
 
+  const answer = generateRuleAnswer(q, hits);
+
   let html = "";
+  if(answer){
+    html += '<div class="panel" style="background:#2a2f1e;border:1px solid #6b5a1e;padding:12px;border-radius:8px">'
+      + '<h3 style="margin:0 0 6px 0">✅ Kurzantwort</h3>'
+      + '<p style="margin:0">'+esc(answer)+'</p></div><div style="height:10px"></div>';
+  }
   if(hits.length){
-    html += '<h3>Gefundene Regeln:</h3>' + hits.map(rule =>
-      '<div class="ruleItem"><span class="ruleNum">'+rule.num+'</span>'+esc(rule.text).replace(/\n/g,"<br>")+'</div>').join("");
+    html += '<h3>Grundlage (Regeltexte):</h3>' + hits.map(rule =>
+      '<div class="ruleItem"><span class="ruleNum">'+rule.num+'</span>'+esc(rule.text.length > 600 ? rule.text.slice(0,600)+"…" : rule.text).replace(/\n/g,"<br>")+'</div>').join("");
   }
 
   // 4) Rulings: Kartennamen in der Frage finden und deren Rulings live laden
@@ -1153,11 +1218,15 @@ function extractCardNames(q){
   // 1) Karten in Anführungszeichen
   const quoted = q.match(/[„"']([^‟"']{3,60})[‟"']/g) || [];
   quoted.forEach(m => { const n = m.replace(/[„‟"']/g,"").trim(); if(n) names.add(n); });
-  // 2) Übereinstimmungen mit geladenen Kartennamen (Wortfolgen)
+  // 2) Übereinstimmung mit geladenen Kartennamen als GANZE Wörter (kein "Lich" in "verhindert"!)
   if(cardDB && cardDB.length){
-    const qLower = q.toLowerCase();
+    const qLower = " " + q.toLowerCase().replace(/[.,;:!?]/g, " ").replace(/\s+/g," ") + " ";
     for(const c of cardDB){
-      if(c.name.length > 3 && qLower.includes(c.name.toLowerCase())){ names.add(c.name); if(names.size >= 3) break; }
+      if(c.name.length < 4) continue;
+      const n = c.name.toLowerCase();
+      if(qLower.includes(" " + n + " ") || qLower.includes(" " + n + "'s ") || (n.length >= 6 && qLower.includes(" " + n))){
+        names.add(c.name); if(names.size >= 3) break;
+      }
     }
   }
   return [...names];
