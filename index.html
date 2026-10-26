@@ -1097,6 +1097,16 @@ const RULE_KEYWORDS = {
   "poison": ["poison", "104.3d"],
   "rad": ["rad", "728"],
   "strahlend": ["rad", "728"],
+  "unzerstörbar": ["indestructible", "702.12", "destroy"],
+  "indestructible": ["indestructible", "702.12"],
+  "zerstören": ["destroy", "701.8"],
+  "todesberührung": ["deathtouch", "702.2"],
+  "deathtouch": ["deathtouch", "702.2"],
+  "wither": ["wither", "702.80"],
+  "regenerieren": ["regenerate", "701.19", "702.12"],
+  "ersten schlag": ["first strike", "702.7"],
+  "double strike": ["double strike", "702.4"],
+  "doppelschlag": ["double strike", "702.4"],
   "daybound": ["daybound", "712", "transform"],
   "nightbound": ["nightbound", "712", "transform"],
   "werwolf": ["transform", "712", "daybound", "nightbound"],
@@ -1121,7 +1131,19 @@ function generateRuleAnswer(q, hits){
   const PATTERN_ANSWERS = [
     { t: (/angreifen|attack/.test(qLower)) && (/gerade|ins spiel|gekommen|summoning|einsatzverz/.test(qLower)),
       answer: "Nein. Eine Kreatur kann erst angreifen, wenn sie seit dem Beginn deines letzten Zugs ununterbrochen unter deiner Kontrolle war („Einsatzverzögerung“, Regel 302.6). Ausnahme: Mit Hast (Regel 702.10) darf sie sofort angreifen." },
-    { t: (/trampeln|trample/.test(qLower)) && (/verhinder|prevent/.test(qLower)),
+    { t: (/trampeln|trampel|trample/.test(qLower)) && (/unzerstörbar|indestr/.test(qLower)),
+      answer: "Du musst dem unzerstörbaren Blocker trotzdem tödlichen Schaden zuweisen — also mindestens seine Härte (Regel 702.19b: tödlicher Schaden = Schaden ≥ Härte gem. Regel 120.6; Unzerstörbarkeit ändert die Schadenszuweisung nicht, Regel 702.12 verhindert nur die Zerstörung). Der gesamte Schaden darüber hinaus geht auf den verteidigenden Spieler über. Der Blocker nimmt den Schaden, stirbt aber nicht." },
+    { t: (/trampeln|trampel|trample/.test(qLower)) && (/todesberührung|deathtouch/.test(qLower)),
+      answer: "Bei Trampeln + Todesberührung genügt 1 Schaden auf den Blocker als „tödlich“ (Regel 702.2: jede Menge Schaden > 0 gilt von einer Quelle mit Todesberührung als tödlich) — der Rest geht voll auf den Spieler über." },
+    { t: /unzerstörbar|indestr/.test(qLower) && (/schaden|damage|sterben|töten/.test(qLower)),
+      answer: "Unzerstörbare Kreaturen können nicht zerstört werden (Regel 702.12b) — aber sie nehmen trotzdem Schaden, verlieren aber nicht dadurch das Leben. Getötet werden können sie dennoch: durch -1/-1-Marken (Wither/Infect), Todesberührung-Regeln greifen nicht, aber Opfern, Exilieren oder -0 Härte (z.B. durch -X/-X-Effekte) entfernen sie." },
+    { t: (/todesberührung|deathtouch/.test(qLower)) && (/blocken|block|kampf/.test(qLower)),
+      answer: "Jede Menge Schaden (> 0) von einer Kreatur mit Todesberührung zerstört die andere Kreatur (Regel 702.2). Beim Blocken genügt also 1 Schaden — auch ein 0/1-Blocker mit Todesberührung tötet jeden Angreifer, dem er Schaden zufügt." },
+    { t: /regener/.test(qLower),
+      answer: "Regeneration ersetzt die Zerstörung: Die Kreatur wird getappt, aus dem Kampf entfernt, markierter Schaden wird gelöscht (Regel 701.19). Sie verlässt nicht das Spiel. Sie schützt nicht vor Opfern, Exilieren oder -1/-1-Marken." },
+    { t: (/todesberührung|deathtouch/.test(qLower)) && (/unzerstörbar|indestr/.test(qLower)),
+      answer: "Todesberührung zerstört die Kreatur (Regel 702.2) — Unzerstörbarkeit verhindert genau das (Regel 702.12). Die unzerstörbare Kreatur nimmt den Schaden, wird aber nicht zerstört." },
+    { t: (/trampeln|trampel|trample/.test(qLower)) && (/verhinder|prevent/.test(qLower)),
       answer: "Beim Zuweisen des Kampfschadens musst du zunächst trotzdem tödlichen Schaden auf den Blocker ansetzen (Regel 702.19b). Schadensprävention (Regel 615) greift erst bei der Ausführung des Schadens — sie ändert nichts an der Zuweisung. Der überschüssige Schaden geht also trotzdem auf den verteidigenden Spieler über, selbst wenn der Blocker den Schaden an sich verhindert: Gezählt wird der zugewiesene, nicht der tatsächlich verursachte Schaden (Regeln 702.19, 510.1, 615.1)." },
     { t: (/blocken|block/.test(qLower)) && (/getappt|tapped/.test(qLower)),
       answer: "Ja, getappte Kreaturen dürfen blocken. Tappen ist keine Voraussetzung fürs Blocken (Regel 509.1a) — anders als beim Angriff (Regel 508.1a)." },
@@ -1137,12 +1159,16 @@ function generateRuleAnswer(q, hits){
       answer: "Beim Mulligan legst du eine Karte pro genommenem Mulligan unter die Bibliothek (London-Mulligan, Regel 103.5): Hand zurück, neu ziehen, dann pro Mulligan eine Karte nach unten legen." },
   ];
   for(const p of PATTERN_ANSWERS){ if(p.t) return p.answer; }
-  // Versuch 2: Kurzzusammenfassung aus dem besten Regeltext
+  // Versuch 2: Passendste Regel als gekennzeichneter Auszug (Satzende, kein Mid-Word-Abbruch)
   const main = hits[0];
   const others = hits.slice(1, 3).map(r => r.num).join(", ");
   let txt = main.text.replace(/\s+/g," ").trim();
-  if(txt.length > 280) txt = txt.slice(0, 277) + "…";
-  return "Nach Regel " + main.num + ": " + txt + (others ? " (siehe auch " + others + ")" : "");
+  if(txt.length > 300){
+    const cut = txt.slice(0, 300);
+    const lastDot = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("; "));
+    txt = lastDot > 80 ? cut.slice(0, lastDot+1) : cut.slice(0, 297) + "…";
+  }
+  return "[Regelauszug] Die passendste Regel ist " + main.num + ": „" + txt + "“" + (others ? " (verwandt: " + others + ")" : "") + " — eine konkrete Kurzantwort dafür habe ich noch nicht hinterlegt; der Regeltext oben ist verbindlich.";
 }
 
 function answerRuleQuestion(){
