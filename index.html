@@ -1454,8 +1454,9 @@ function castSpell(idx){
   game.hand.splice(idx,1);
   const t = c.type_line || "";
   if(t.includes("Creature") || t.includes("Artifact") || t.includes("Enchantment") || t.includes("Planeswalker") || t.includes("Land") || t.includes("Battle")){
-    game.battlefield.push({ ...c, kind: "perm", tapped: false, counters: c.loyalty ? +c.loyalty : 0, dmg: 0 });
-    log("Verzaubert: "+c.name+" ("+(c.pow||"?")+"/"+(c.tou||"?")+")");
+    game.battlefield.push({ ...c, kind: "perm", tapped: false, turnPlayed: game.turn, counters: c.loyalty ? +c.loyalty : 0, dmg: 0 });
+    log("Ausgespielt: "+c.name+" ("+(c.pow||"?")+"/"+(c.tou||"?")+")");
+    applyEtbEffects(game.battlefield[game.battlefield.length-1], false);
   } else {
     game.graveyard.push(c);
     log("Zauber: "+c.name+" →_stack→ Friedhof (Effekt manuell ausführen — Goldfisch-Modus)");
@@ -1541,11 +1542,12 @@ function oppPayAndCast(idx){
   o.hand.splice(idx,1);
   const t = c.type_line || "";
   if(t.includes("Creature") || t.includes("Artifact") || t.includes("Enchantment") || t.includes("Planeswalker")){
-    o.battlefield.push({ ...c, kind:"perm", tapped:false, counters: c.loyalty ? +c.loyalty : 0 });
-    log("\U0001F916 Gegner: "+c.name+(c.pow?" ("+c.pow+"/"+c.tou+")":"")+" ausgespielt.");
+    o.battlefield.push({ ...c, kind:"perm", tapped:false, turnPlayed: game.turn+1, counters: c.loyalty ? +c.loyalty : 0 });
+    log("🤖 Gegner: "+c.name+(c.pow?" ("+c.pow+"/"+c.tou+")":"")+" ausgespielt.");
+    applyEtbEffects(o.battlefield[o.battlefield.length-1], true);
   } else {
     o.graveyard.push(c);
-    log("\U0001F916 Gegner: Zauber "+c.name+" (Effekt vereinfacht).");
+    log("🤖 Gegner: Zauber "+c.name+" (Effekt vereinfacht).");
     applySimpleOppSpell(c);
   }
 }
@@ -1553,16 +1555,16 @@ function applySimpleOppSpell(c){
   const o = game.opp;
   const txt = (c.oracle||"").toLowerCase();
   const dmgM = txt.match(/deals? ([0-9]+) damage/);
-  if(dmgM){ const d = +dmgM[1]; game.life -= d; log("\U0001F916 "+c.name+": "+d+" Schaden an dir (Leben "+game.life+")."); checkGameEnd(); }
+  if(dmgM){ const d = +dmgM[1]; game.life -= d; log("🤖 "+c.name+": "+d+" Schaden an dir (Leben "+game.life+")."); checkGameEnd(); }
 }
 function oppTurn(){
   if(!game || !game.opp) return;
   const o = game.opp;
-  log("\u2014 \U0001F916 Gegner-Zug "+(game.turn+1)+" \u2014");
+  log("\u2014 🤖 Gegner-Zug "+(game.turn+1)+" \u2014");
   o.battlefield.forEach(p=>p.tapped = false);
   const drawn = o.library.pop();
   if(drawn) o.hand.push(drawn);
-  else { log("\U0001F916 Gegner kann nicht ziehen \u2014 Regel 104.3c w\u00FCrde Niederlage bedeuten (vereinfacht ignoriert)."); }
+  else { log("🤖 Gegner kann nicht ziehen \u2014 Regel 104.3c w\u00FCrde Niederlage bedeuten (vereinfacht ignoriert)."); }
   // Hauptphase: Länder legen
   o.playedLand = false;
   const landIdx = o.hand.findIndex(c => (c.type_line||"").includes("Land"));
@@ -1570,12 +1572,12 @@ function oppTurn(){
     const land = o.hand.splice(landIdx,1)[0];
     o.battlefield.push({ ...land, kind:"land", tapped:false });
     o.playedLand = true;
-    log("\U0001F916 Gegner: Land ("+land.name+") gespielt.");
+    log("🤖 Gegner: Land ("+land.name+") gespielt.");
   }
   // Länder für Mana tappen (alle, bis genug für größte spielbare Karte)
   const untappedLands = o.battlefield.filter(p=>p.kind==="land" && !p.tapped);
   untappedLands.forEach(l => { l.tapped = true; o.manaPool.push(landColor(l)); });
-  if(untappedLands.length) log("\U0001F916 Gegner: tappt "+untappedLands.length+" Land/Länder für Mana.");
+  if(untappedLands.length) log("🤖 Gegner: tappt "+untappedLands.length+" Land/Länder für Mana.");
   // Zaubern: so viele Kreaturen wie möglich (aggressiv), dann Zauber
   let casted = true;
   while(casted){
@@ -1591,13 +1593,24 @@ function oppTurn(){
     }
     if(best >= 0){ oppPayAndCast(best); casted = true; }
   }
-  // Kampf: alle ungetappten Kreaturen angreifen
-  const atk = o.battlefield.filter(p => p.kind==="perm" && !p.tapped && (p.type_line||"").includes("Creature"));
+  // Kampf: Einsatzverzögerung (Regel 302.6), Defender und "can't attack"-Kartentexte respektieren
+  const canAtk = p => {
+    if(p.kind !== "perm" || p.tapped) return false;
+    if(!(p.type_line||"").includes("Creature")) return false;
+    if((p.type_line||"").toLowerCase().includes("defender")) return false;
+    const txt = (p.oracle||"").toLowerCase();
+    if(txt.includes("can't attack") || txt.includes("cannot attack")) return false;
+    if(!p.turnPlayed || p.turnPlayed < game.turn + 1) return true;
+    return txt.includes("haste");
+  };
+  const atk = o.battlefield.filter(canAtk);
+  const held = o.battlefield.filter(p => p.kind==="perm" && !p.tapped && (p.type_line||"").includes("Creature") && !atk.includes(p));
+  if(held.length) log("⚙ 🤖 "+held.map(c=>c.name).join(", ")+(held.length>1?" können":" kann")+" dieses Zug nicht angreifen (Regel 302.6 / Kartentext).");
   if(atk.length){
-    log("\U0001F916 Gegner greift an mit "+atk.map(c=>c.name+" ("+c.pow+"/"+c.tou+")").join(", "));
+    log("🤖 Gegner greift an mit "+atk.map(c=>c.name+" ("+c.pow+"/"+c.tou+")").join(", "));
     atk.forEach(a => a.tapped = true);
     oppResolveCombat(atk);
-  } else log("\U0001F916 Gegner greift nicht an.");
+  } else log("🤖 Gegner greift nicht an.");
   o.manaPool = [];
   renderPlay();
 }
@@ -1644,7 +1657,7 @@ function oppResolveCombat(attackers){
    Nicht erfasste Effekte werden im Protokoll als Hinweis aufgeführt. */
 function applyEtbEffects(perm, isOpponent){
   const txt = (perm.oracle||"").toLowerCase();
-  const who = isOpponent ? "\U0001F916 Gegner" : "Du";
+  const who = isOpponent ? "🤖 Gegner" : "Du";
   let did = false;
   // ETB: Karten ziehen
   const drawM = txt.match(/when [^.]*?enters?[^.]*?, (?:you may )?draw (?:a|one|two|three) cards?/);
@@ -1662,7 +1675,7 @@ function applyEtbEffects(perm, isOpponent){
   const dmgM = txt.match(/deals? (\d+) damage (?:to|to any target|to target (?:creature|player|opponent|any target))/);
   if(dmgM && /enters?|when/.test(txt)){
     const d = +dmgM[1];
-    if(isOpponent){ game.life -= d; log("\U0001F916 ⚙ "+perm.name+" (ETB): "+d+" Schaden an dir \u2014 Leben "+game.life+"."); checkGameEnd(); }
+    if(isOpponent){ game.life -= d; log("🤖 ⚙ "+perm.name+" (ETB): "+d+" Schaden an dir \u2014 Leben "+game.life+"."); checkGameEnd(); }
     else if(game.opp){ game.opp.life -= d; log("⚙ "+perm.name+" (ETB): "+d+" Schaden am Gegner \u2014 dessen Leben "+game.opp.life+"."); checkGameEnd(); }
     did = true;
   }
@@ -1670,7 +1683,7 @@ function applyEtbEffects(perm, isOpponent){
   const lifeM = txt.match(/you gain (\d+) life/);
   if(lifeM && /enters?|when/.test(txt)){
     const g = +lifeM[1];
-    if(isOpponent){ game.opp.life += g; log("\U0001F916 ⚙ "+perm.name+" (ETB): Gegner +"+g+" Leben ("+game.opp.life+")."); }
+    if(isOpponent){ game.opp.life += g; log("🤖 ⚙ "+perm.name+" (ETB): Gegner +"+g+" Leben ("+game.opp.life+")."); }
     else { game.life += g; log("⚙ "+perm.name+" (ETB): Du +"+g+" Leben ("+game.life+")."); }
     did = true;
   }
@@ -1682,7 +1695,7 @@ function applyEtbEffects(perm, isOpponent){
 function applyLifelink(source, dmg, isOpponent){
   const txt = (source.oracle||"").toLowerCase();
   if(!txt.includes("lifelink") || dmg <= 0) return;
-  if(isOpponent){ game.opp.life += dmg; log("\U0001F916 "+source.name+" (Lifelink): Gegner +"+dmg+" Leben ("+game.opp.life+")."); }
+  if(isOpponent){ game.opp.life += dmg; log("🤖 "+source.name+" (Lifelink): Gegner +"+dmg+" Leben ("+game.opp.life+")."); }
   else { game.life += dmg; log(source.name+" (Lifelink): Du +"+dmg+" Leben ("+game.life+")."); }
 }
 
