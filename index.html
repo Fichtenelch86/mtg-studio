@@ -291,9 +291,10 @@ mark { background: #6b5a1e; color: #ffe9a8; border-radius: 2px; }
         </select>
       </div>
       <div class="row" style="margin-top:8px">
-        <button class="primary" onclick="startPlayTest(true)">⚔️ Testspiel MIT Gegner starten</button>
-        <span class="muted">Der Gegner zieht automatisch — Länder legen, zaubern, angreifen. Du blockst.</span>
+        <button class="primary" onclick="startPlayTest(true)">⚔️ Testspiel MIT Gegner</button>
+        <button onclick="startPlayTest()">🐚 Ohne Gegner (Goldfischen)</button>
       </div>
+      <p class="muted" style="margin-top:6px">Mit Gegner: KI zieht automatisch (Länder, zaubern, angreifen) — du blockst. Ohne Gegner: reines Goldfischen, dein Angriffsschaden wird protokolliert.</p>
     </div>
     <div id="playStats" style="margin-top:10px">
       <div class="stat"><b id="stLife">20</b><span>Leben</span></div>
@@ -1338,6 +1339,7 @@ function nextPhase(){
       if(game.opp){
         game.opp.life -= dmg;
         log("⚔ Deine "+myAtk.length+" Angreifer fügen dem Gegner "+dmg+" Schaden zu — Gegner-Leben: "+game.opp.life+" (Regel 510.2, vereinfacht: Gegner blockt nicht).");
+        myAtk.forEach(a => applyLifelink(a, (+a.pow||0), false));
         checkGameEnd();
       } else log("⚔ Goldfisch: "+myAtk.length+" Angreifer hätten "+dmg+" Schaden verursacht.");
     } else log("Kampfphase: Keine Angreifer deklariert.");
@@ -1633,9 +1635,57 @@ function oppResolveCombat(attackers){
   if(totalDmg > 0){
     game.life -= totalDmg;
     log("🤖 Unblockierter Kampfschaden: "+totalDmg+" — dein Leben: "+game.life+" (Regel 510.2).");
+    attackers.filter(a => (a.oracle||"").toLowerCase().includes("lifelink")).forEach(a => applyLifelink(a, (+a.pow||0), true));
   }
   checkGameEnd();
 }
+/* ================= Vereinfachte Trigger-Engine (ETB + Lifelink) ================= */
+/* Führt häufige "ins Spiel kommen"-Effekte (ETB) und Lifelink automatisiert aus.
+   Nicht erfasste Effekte werden im Protokoll als Hinweis aufgeführt. */
+function applyEtbEffects(perm, isOpponent){
+  const txt = (perm.oracle||"").toLowerCase();
+  const who = isOpponent ? "\U0001F916 Gegner" : "Du";
+  let did = false;
+  // ETB: Karten ziehen
+  const drawM = txt.match(/when [^.]*?enters?[^.]*?, (?:you may )?draw (?:a|one|two|three) cards?/);
+  if(drawM){
+    const n = /three/.test(drawM[0]) ? 3 : /two/.test(drawM[0]) ? 2 : 1;
+    for(let i=0;i<n;i++){
+      const lib = isOpponent ? game.opp.library : game.library;
+      const hand = isOpponent ? game.opp.hand : game.hand;
+      const c = lib.pop(); if(c) hand.push(c);
+    }
+    log(who+": ⚙ ETB "+perm.name+": "+n+" Karte(n) gezogen.");
+    did = true;
+  }
+  // ETB / Fähigkeit: direkter Schaden an einen Spieler (vereinfacht: der andere Spieler)
+  const dmgM = txt.match(/deals? (\d+) damage (?:to|to any target|to target (?:creature|player|opponent|any target))/);
+  if(dmgM && /enters?|when/.test(txt)){
+    const d = +dmgM[1];
+    if(isOpponent){ game.life -= d; log("\U0001F916 ⚙ "+perm.name+" (ETB): "+d+" Schaden an dir \u2014 Leben "+game.life+"."); checkGameEnd(); }
+    else if(game.opp){ game.opp.life -= d; log("⚙ "+perm.name+" (ETB): "+d+" Schaden am Gegner \u2014 dessen Leben "+game.opp.life+"."); checkGameEnd(); }
+    did = true;
+  }
+  // ETB: Leben gewinnen
+  const lifeM = txt.match(/you gain (\d+) life/);
+  if(lifeM && /enters?|when/.test(txt)){
+    const g = +lifeM[1];
+    if(isOpponent){ game.opp.life += g; log("\U0001F916 ⚙ "+perm.name+" (ETB): Gegner +"+g+" Leben ("+game.opp.life+")."); }
+    else { game.life += g; log("⚙ "+perm.name+" (ETB): Du +"+g+" Leben ("+game.life+")."); }
+    did = true;
+  }
+  // Nicht erfasster ETB-Text → Hinweis
+  if(!did && /when|whenever/.test(txt) && /enters? (?:the )?battlefield/.test(txt)){
+    log("⚙ "+who+": "+perm.name+" hat einen ins-Spiel-Kommen-Effekt, der vereinfacht nicht ausgeführt wird (im Protokoll manuell beachten).");
+  }
+}
+function applyLifelink(source, dmg, isOpponent){
+  const txt = (source.oracle||"").toLowerCase();
+  if(!txt.includes("lifelink") || dmg <= 0) return;
+  if(isOpponent){ game.opp.life += dmg; log("\U0001F916 "+source.name+" (Lifelink): Gegner +"+dmg+" Leben ("+game.opp.life+")."); }
+  else { game.life += dmg; log(source.name+" (Lifelink): Du +"+dmg+" Leben ("+game.life+")."); }
+}
+
 function checkGameEnd(){
   if(game.opp && game.opp.life <= 0){ log("\Uud83C\uDFA6 SIEG! Das Gegner-Leben ist auf 0."); toast("\u2705 Du gewinnst!"); game = null; renderPlay(); }
   else if(game && game.life <= 0){ log("\u2620 NIEDERLAGE: Dein Leben ist auf 0 (Regel 104.3b)."); toast("\u274C Du verlierst!"); game = null; renderPlay(); }
