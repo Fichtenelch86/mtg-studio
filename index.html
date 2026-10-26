@@ -1713,37 +1713,105 @@ function nextPhase(){
     if(myAtk.length){
       myAtk.forEach(a=>a.attacking=false);
       if(game.opp){
-        // Vereinfachte KI-Blocker: Gegner blockt den stärksten unblockbaren Angreifer mit seiner besten legalen Kreatur (Regel 702.9b für Fliegend)
-        let dmg = myAtk.reduce((s,a)=>s+(+a.pow||0),0);
+        // ===== KI-Blocker-Deklaration (vereinfacht): Gegner blockt sinnvoll =====
         const oppBlockers = game.opp.battlefield.filter(p => p.kind==="perm" && (p.type_line||"").includes("Creature") && !p.tapped);
         const usedOpp = new Set();
+        const pairings = [];
         for(const a of myAtk){
           if(!oppBlockers.length) break;
           const legal = oppBlockers.filter(b => !usedOpp.has(b) && canBlock(a, b));
           if(!legal.length) continue;
-          // KI: blockt nur, wenn Blocker den Angreifer tötet oder selbst überlebt
           const best = legal.map(b => ({ b, die: (+b.pow||0) >= (+a.tou||0) })).sort((x,y) => (y.die?1:0)-(x.die?1:0))[0];
           if(!best) continue;
           const kills = (+best.b.pow||0) >= (+a.tou||0);
           const survives = (+a.pow||0) < (+best.b.tou||0);
           if(kills || survives){
             usedOpp.add(best.b);
-            const aDmg = +a.pow||0, bDmg = +best.b.pow||0;
-            let aDied = bDmg >= (+a.tou||0), bDied = aDmg >= (+best.b.tou||0);
-            dmg -= aDmg;
-            if(bDied){ const i = game.opp.battlefield.indexOf(best.b); if(i>=0){ game.opp.battlefield.splice(i,1); game.opp.graveyard.push(best.b); } }
-            if(aDied){ const i = game.battlefield.indexOf(a); if(i>=0){ game.battlefield.splice(i,1); game.graveyard.push(a); } }
-            const tr = trampleDamage(a, best.b);
-            if(tr > 0) dmg += tr;
-            log("🤖 Gegner blockt "+a.name+" mit "+best.b.name+(tr > 0 ? " — Trampeln: "+tr+" Schaden gehen durch" : "")+".");
+            pairings.push({ atk: a, blocker: best.b });
+            log("🤖 Gegner blockt "+a.name+" mit "+best.b.name+".");
           }
         }
-        dmg = Math.max(0, dmg);
+        const unblocked = myAtk.filter(a => !pairings.some(p => p.atk === a));
+        // ===== ERSTER Kampfschadens-Schritt (nur Erst-/Doppelschlag, Regel 702.7b/702.4b) =====
+        let totalDmg = 0;
+        const firstStrikeAtk = myAtk.filter(a => hasAbility(a, "first strike") || hasAbility(a, "double strike"));
+        const firstStrikeBlk = pairings.filter(p => hasAbility(p.blocker, "first strike") || hasAbility(p.blocker, "double strike"));
+        if(firstStrikeAtk.length || firstStrikeBlk.length){
+          log("⚔ ERSTER Kampfschadens-Schritt (Erst-/Doppelschlag, Regel 702.7b):");
+          let fsDmg = 0;
+          for(const a of firstStrikeAtk){
+            const pair = pairings.find(p => p.atk === a);
+            if(pair){
+              const d = +a.pow||0;
+              if(d >= (+pair.blocker.tou||0)){
+                const i = game.opp.battlefield.indexOf(pair.blocker);
+                if(i>=0){ game.opp.battlefield.splice(i,1); game.opp.graveyard.push(pair.blocker); }
+                log("  ✖ "+pair.blocker.name+" stirbt im Erstschlag-Schritt ("+d+" Schaden, Härte "+pair.blocker.tou+").");
+                pairings.splice(pairings.indexOf(pair), 1);
+                const tr = trampleDamage(a, pair.blocker);
+                if(tr > 0){ fsDmg += tr; log("  → Trampeln: "+tr+" Schaden an den Gegner."); }
+              } else log("  "+a.name+" macht "+d+" Schaden auf "+pair.blocker.name+" (überlebt).");
+            } else {
+              fsDmg += +a.pow||0;
+              log("  "+a.name+" (unblockiert) macht "+(+a.pow||0)+" Schaden.");
+            }
+          }
+          // Erstschlag-Blocker schlagen zurück (nur gegen lebende Angreifer)
+          for(const p of firstStrikeBlk){
+            if(!game.battlefield.includes(p.atk)) continue;
+            const d = +p.blocker.pow||0;
+            if(d >= (+p.atk.tou||0)){
+              const i = game.battlefield.indexOf(p.atk);
+              if(i>=0){ game.battlefield.splice(i,1); game.graveyard.push(p.atk); }
+              log("  ✖ Dein Angreifer "+p.atk.name+" stirbt durch Erstschlag-Blocker "+p.blocker.name+".");
+            }
+          }
+          if(fsDmg > 0){ totalDmg += fsDmg; log("  Erstschlag-Schaden: "+fsDmg+" \u2014 (wird mit dem Gesamtschaden verrechnet)."); }
+          log("(Zwischen den Schritten würden beide Spieler Priorität erhalten, Regel 510.3 — vereinfacht übersprungen.)");
+        }
+        // ===== ZWEITER Kampfschadens-Schritt (alle ohne Erstschlag; Doppelschlag nochmal) =====
+        let dmg = 0;
+        for(const a of myAtk){
+          if(!game.battlefield.includes(a)) continue;  // im ersten Schritt gestorben
+          const pureFirst = hasAbility(a, "first strike") && !hasAbility(a, "double strike");
+          const pair = pairings.find(p => p.atk === a);
+          // Gegenschlag des Blockers: trifft JEDE lebende gepaarte Kreatur (auch reine Erstschläger, Regel 510.2: Blocker-Deckung gilt für alle)
+          if(pair && game.battlefield.includes(a) && game.opp.battlefield.includes(pair.blocker)){
+            const bDmg = +pair.blocker.pow||0;
+            if(bDmg >= (+a.tou||0)){
+              const i = game.battlefield.indexOf(a);
+              if(i>=0){ game.battlefield.splice(i,1); game.graveyard.push(a); }
+              log("✖ Dein Angreifer "+a.name+" stirbt durch "+pair.blocker.name+" ("+bDmg+" Schaden, Härte "+a.tou+").");
+            }
+          }
+          if(pureFirst) continue;  // reiner Erstschläger: Schaden war im ersten Schritt, nur Gegenschlag relevant
+          if(pair && game.battlefield.includes(a)){
+            const d = +a.pow||0;
+            if(game.opp.battlefield.includes(pair.blocker)){
+              if(d >= (+pair.blocker.tou||0)){
+                const i = game.opp.battlefield.indexOf(pair.blocker);
+                if(i>=0){ game.opp.battlefield.splice(i,1); game.opp.graveyard.push(pair.blocker); }
+                log("✖ "+pair.blocker.name+" stirbt ("+d+" Schaden).");
+                const tr = trampleDamage(a, pair.blocker);
+                if(tr > 0){ dmg += tr; log("→ Trampeln: "+tr+" Schaden an den Gegner."); }
+              } else log(a.name+" macht "+d+" Schaden auf "+pair.blocker.name+" (überlebt).");
+            }
+          } else if(game.battlefield.includes(a)){
+            // Unblockiert: ohne Erstschlag (oder mit Doppelschlag 2. Teil)
+            const wasFS = hasAbility(a, "double strike");
+            dmg += +a.pow||0;
+            if(wasFS) log(a.name+" (Doppelschlag, 2. Treffer): "+(+a.pow||0)+" Schaden.");
+          }
+        }
+        dmg += totalDmg;
         game.opp.life -= dmg;
-        log("⚔ Deine Angreifer fügen dem Gegner "+dmg+" Schaden zu — Gegner-Leben: "+game.opp.life+" (Regel 510.2, vereinfachte Blocker-KI).");
-        myAtk.forEach(a => applyLifelink(a, (+a.pow||0), false));
+        log("⚔ Deine Angreifer fügen dem Gegner insgesamt "+dmg+" Schaden zu — Gegner-Leben: "+game.opp.life+" (Regel 510.2).");
+        myAtk.forEach(a => { if(game.battlefield.includes(a)) applyLifelink(a, (+a.pow||0), false); });
         checkGameEnd();
-      } else log("⚔ Goldfisch: "+myAtk.length+" Angreifer hätten "+dmg+" Schaden verursacht.");
+      } else {
+        const dmg = myAtk.reduce((s,a)=>s+(+a.pow||0),0) * (myAtk.some(a=>hasAbility(a,"double strike")) ? 1 : 1);
+        log("⚔ Goldfisch: "+myAtk.length+" Angreifer hätten "+dmg+" Schaden verursacht."+(myAtk.some(a=>hasAbility(a,"double strike")) ? " (Doppelschlag-Kreaturen würden doppelt zuschlagen.)" : ""));
+      }
     } else log("Kampfphase: Keine Angreifer deklariert.");
     log("Hauptphase 2: Wieder Länder legen / zaubern möglich.");
     $("phaseBtn").textContent = "→ Zug beenden";
@@ -2016,6 +2084,50 @@ function oppTurn(){
   o.manaPool = [];
   renderPlay();
 }
+/* ================= Vereinfachte Trigger-Engine (ETB + Lifelink) ================= */
+function applyEtbEffects(perm, isOpponent){
+  const txt = (perm.oracle||"").toLowerCase();
+  const who = isOpponent ? "\U0001F916 Gegner" : "Du";
+  let did = false;
+  // ETB: Karten ziehen
+  const drawM = txt.match(/when [^.]*?enters?[^.]*?, (?:you may )?draw (?:a|one|two|three) cards?/);
+  if(drawM){
+    const n = /three/.test(drawM[0]) ? 3 : /two/.test(drawM[0]) ? 2 : 1;
+    for(let i=0;i<n;i++){
+      const lib = isOpponent ? game.opp.library : game.library;
+      const hand = isOpponent ? game.opp.hand : game.hand;
+      const c = lib.pop(); if(c) hand.push(c);
+    }
+    log(who+": \u2699 ETB "+perm.name+": "+n+" Karte(n) gezogen.");
+    did = true;
+  }
+  // ETB: direkter Schaden
+  const dmgM = txt.match(/deals? (\d+) damage (?:to|to any target|to target (?:creature|player|opponent|any target))/);
+  if(dmgM && /enters?|when/.test(txt)){
+    const d = +dmgM[1];
+    if(isOpponent){ game.life -= d; log("\U0001F916 \u2699 "+perm.name+" (ETB): "+d+" Schaden an dir \u2014 Leben "+game.life+"."); checkGameEnd(); }
+    else if(game.opp){ game.opp.life -= d; log("\u2699 "+perm.name+" (ETB): "+d+" Schaden am Gegner \u2014 dessen Leben "+game.opp.life+"."); checkGameEnd(); }
+    did = true;
+  }
+  // ETB: Leben gewinnen
+  const lifeM = txt.match(/you gain (\d+) life/);
+  if(lifeM && /enters?|when/.test(txt)){
+    const g = +lifeM[1];
+    if(isOpponent){ game.opp.life += g; log("\U0001F916 \u2699 "+perm.name+" (ETB): Gegner +"+g+" Leben ("+game.opp.life+")."); }
+    else { game.life += g; log("\u2699 "+perm.name+" (ETB): Du +"+g+" Leben ("+game.life+")."); }
+    did = true;
+  }
+  if(!did && /when|whenever/.test(txt) && /enters? (?:the )?battlefield/.test(txt)){
+    log("\u2699 "+who+": "+perm.name+" hat einen ins-Spiel-Kommen-Effekt, der vereinfacht nicht ausgeführt wird (im Protokoll manuell beachten).");
+  }
+}
+function applyLifelink(source, dmg, isOpponent){
+  const txt = (source.oracle||"").toLowerCase();
+  if(!txt.includes("lifelink") || dmg <= 0) return;
+  if(isOpponent){ game.opp.life += dmg; log("\U0001F916 "+source.name+" (Lifelink): Gegner +"+dmg+" Leben ("+game.opp.life+")."); }
+  else { game.life += dmg; log(source.name+" (Lifelink): Du +"+dmg+" Leben ("+game.life+")."); }
+}
+
 /* ===== Kampf-Fähigkeiten (vereinfachte Auswertung) ===== */
 function hasAbility(p, ab){ return (p.oracle||"").toLowerCase().includes(ab) || (p.keywords||[]).some(k => k.toLowerCase() === ab); }
 /* Ein Angreifer mit Fliegend kann nur von Blockern mit Fliegend/Reichweite geblockt werden (Regel 702.9b) */
@@ -2032,90 +2144,90 @@ function trampleDamage(attacker, blocker){
 }
 
 function oppResolveCombat(attackers){
-  // Blocker-Deklaration (vereinfacht): Jede deiner Kreaturen kann nur EINEN Angreifer blocken (Regel 509.1a).
-  // Getappte Kreaturen dürfen blocken (Regel 509.1a: Tappen ist kein Block-Hindernis).
+  // Blocker-Deklaration (vereinfacht): Jede deiner Kreaturen blockt genau EINEN Angreifer (Regel 509.1a).
   let totalDmg = 0;
   const available = game.battlefield.filter(p => p.kind==="perm" && (p.type_line||"").includes("Creature") && !p.attacking);
   const used = new Set();
+  const pairings = [];
   for(const atk of attackers){
     const blockers = available.filter(b => !used.has(b) && canBlock(atk, b));
     let blocked = null;
     if(blockers.length){
       const opts = blockers.map((b,i)=>(i+1)+") "+b.name+" ("+b.pow+"/"+b.tou+")").join("\n");
-      const ch = prompt("🤖 Angreifer: "+atk.name+" ("+atk.pow+"/"+atk.tou+")\n\nBlocken?\n0) Nein, Schaden nehmen\n"+opts+"\n\nNummer:");
+      const ch = prompt("\U0001F916 Angreifer: "+atk.name+" ("+atk.pow+"/"+atk.tou+")"+(hasAbility(atk,"first strike")?" [Erstschlag]":"")+(hasAbility(atk,"double strike")?" [Doppelschlag]":"")+"\n\nBlocken?\n0) Nein, Schaden nehmen\n"+opts+"\n\nNummer:");
       if(ch !== null && ch !== "" && !isNaN(+ch) && +ch >= 1 && +ch <= blockers.length){
         blocked = blockers[+ch-1];
         used.add(blocked);
+        pairings.push({ atk, blocker: blocked });
       }
     }
-    if(blocked){
-      const atkDmg = +atk.pow || 0, blkDmg = +blocked.pow || 0;
-      const blkTou = +blocked.tou || 0, atkTou = +atk.tou || 0;
-      log("⚔ "+blocked.name+" ("+blkDmg+"/"+blkTou+") blockt "+atk.name+" ("+atkDmg+"/"+atkTou+").");
-      let blockerDied = atkDmg >= blkTou;
-      let attackerDied = blkDmg >= atkTou;
-      if(blockerDied){ game.battlefield = game.battlefield.filter(p => p !== blocked); game.graveyard.push(blocked); log("✖ Dein Blocker "+blocked.name+" stirbt (Regel 704.5g vereinfacht)."); }
-      if(attackerDied){ const oi = game.opp.battlefield.indexOf(atk); if(oi>=0){ game.opp.battlefield.splice(oi,1); game.opp.graveyard.push(atk); } log("✔ Angreifer "+atk.name+" stirbt."); }
-      if(!blockerDied && !attackerDied) log("— Beide überleben (Schaden bis Zugende vereinfacht ignoriert).");
-      // Trampeln: überschüssiger Schaden geht an dich (Regel 702.19b)
-      const tr = trampleDamage(atk, blocked);
-      if(tr > 0){ totalDmg += tr; log("→ "+atk.name+" hat Trampeln: "+tr+" Schaden gehen an dich durch (Regel 702.19b)."); }
+  }
+  // ===== ERSTER Kampfschadens-Schritt (Erst-/Doppelschlag, Regel 702.7b) =====
+  const fsAttackers = attackers.filter(a => game.opp.battlefield.includes(a) && (hasAbility(a, "first strike") || hasAbility(a, "double strike")));
+  const fsBlockers = pairings.filter(p => hasAbility(p.blocker, "first strike") || hasAbility(p.blocker, "double strike"));
+  if(fsAttackers.length || fsBlockers.length){
+    log("\u2694 ERSTER Kampfschadens-Schritt (Erst-/Doppelschlag, Regel 702.7b):");
+    let fsDmg = 0;
+    for(const a of fsAttackers){
+      const pair = pairings.find(p => p.atk === a);
+      if(pair){
+        const d = +a.pow||0;
+        if(d >= (+pair.blocker.tou||0)){
+          const bi = game.battlefield.indexOf(pair.blocker);
+          if(bi>=0){ game.battlefield.splice(bi,1); game.graveyard.push(pair.blocker); }
+          log("  \u2716 Dein Blocker "+pair.blocker.name+" stirbt im Erstschlag-Schritt ("+d+" Schaden).");
+          pairings.splice(pairings.indexOf(pair), 1);
+          const tr = trampleDamage(a, pair.blocker);
+          if(tr > 0){ fsDmg += tr; log("  \u2192 "+a.name+" Trampeln: "+tr+" Schaden an dir."); }
+        } else log("  "+a.name+" macht "+d+" Schaden auf deinen "+pair.blocker.name+" (\u00fcberlebt).");
+      } else {
+        fsDmg += +a.pow||0;
+        log("  "+a.name+" (unblockiert, Erstschlag) macht "+(+a.pow||0)+" Schaden.");
+      }
+    }
+    // Erstschlag-Blocker schlagen zurück
+    for(const p of fsBlockers){
+      if(!game.opp.battlefield.includes(p.atk)) continue;
+      const d = +p.blocker.pow||0;
+      if(d >= (+p.atk.tou||0)){
+        const ai = game.opp.battlefield.indexOf(p.atk);
+        if(ai>=0){ game.opp.battlefield.splice(ai,1); game.opp.graveyard.push(p.atk); }
+        log("  \u2714 Angreifer "+p.atk.name+" stirbt durch deinen Erstschlag-Blocker "+p.blocker.name+".");
+      }
+    }
+    if(fsDmg > 0){
+      game.life -= fsDmg;
+      totalDmg += fsDmg;
+      log("  Erstschlag-Schaden: "+fsDmg+" \u2014 dein Leben: "+game.life+".");
+    }
+    log("(Priorität zwischen den Schritten vereinfacht \u00fcbersprungen, Regel 510.3.)");
+  }
+  // ===== ZWEITER Kampfschadens-Schritt =====
+  for(const atk of attackers){
+    if(!game.opp.battlefield.includes(atk)) continue;
+    if(hasAbility(atk, "first strike") && !hasAbility(atk, "double strike")) continue;
+    const pair = pairings.find(p => p.atk === atk);
+    if(pair && game.battlefield.includes(pair.blocker)){
+      const atkDmg = +atk.pow||0, blkDmg = +pair.blocker.pow||0;
+      log("\u2694 "+pair.blocker.name+" ("+blkDmg+"/"+pair.blocker.tou+") blockt "+atk.name+" ("+atkDmg+"/"+atk.tou+").");
+      let blockerDied = atkDmg >= (+pair.blocker.tou||0);
+      let attackerDied = blkDmg >= (+atk.tou||0);
+      if(blockerDied){ game.battlefield = game.battlefield.filter(p => p !== pair.blocker); game.graveyard.push(pair.blocker); log("\u2716 Dein Blocker "+pair.blocker.name+" stirbt (Regel 704.5g vereinfacht)."); }
+      if(attackerDied){ const oi = game.opp.battlefield.indexOf(atk); if(oi>=0){ game.opp.battlefield.splice(oi,1); game.opp.graveyard.push(atk); } log("\u2714 Angreifer "+atk.name+" stirbt."); }
+      if(!blockerDied && !attackerDied) log("\u2014 Beide \u00fcberleben.");
+      const tr = trampleDamage(atk, pair.blocker);
+      if(tr > 0){ totalDmg += tr; log("\u2192 "+atk.name+" hat Trampeln: "+tr+" Schaden gehen an dich durch (Regel 702.19b)."); }
+      applyLifelink(atk, atkDmg, true);
     } else {
-      totalDmg += +atk.pow || 0;
+      totalDmg += +atk.pow||0;
+      applyLifelink(atk, (+atk.pow||0), true);
     }
   }
   if(totalDmg > 0){
     game.life -= totalDmg;
-    log("🤖 Unblockierter Kampfschaden: "+totalDmg+" — dein Leben: "+game.life+" (Regel 510.2).");
-    attackers.filter(a => (a.oracle||"").toLowerCase().includes("lifelink")).forEach(a => applyLifelink(a, (+a.pow||0), true));
+    log("\U0001F916 Kampfschaden gesamt: "+totalDmg+" \u2014 dein Leben: "+game.life+" (Regel 510.2).");
   }
   checkGameEnd();
-}
-/* ================= Vereinfachte Trigger-Engine (ETB + Lifelink) ================= */
-/* Führt häufige "ins Spiel kommen"-Effekte (ETB) und Lifelink automatisiert aus.
-   Nicht erfasste Effekte werden im Protokoll als Hinweis aufgeführt. */
-function applyEtbEffects(perm, isOpponent){
-  const txt = (perm.oracle||"").toLowerCase();
-  const who = isOpponent ? "🤖 Gegner" : "Du";
-  let did = false;
-  // ETB: Karten ziehen
-  const drawM = txt.match(/when [^.]*?enters?[^.]*?, (?:you may )?draw (?:a|one|two|three) cards?/);
-  if(drawM){
-    const n = /three/.test(drawM[0]) ? 3 : /two/.test(drawM[0]) ? 2 : 1;
-    for(let i=0;i<n;i++){
-      const lib = isOpponent ? game.opp.library : game.library;
-      const hand = isOpponent ? game.opp.hand : game.hand;
-      const c = lib.pop(); if(c) hand.push(c);
-    }
-    log(who+": ⚙ ETB "+perm.name+": "+n+" Karte(n) gezogen.");
-    did = true;
-  }
-  // ETB / Fähigkeit: direkter Schaden an einen Spieler (vereinfacht: der andere Spieler)
-  const dmgM = txt.match(/deals? (\d+) damage (?:to|to any target|to target (?:creature|player|opponent|any target))/);
-  if(dmgM && /enters?|when/.test(txt)){
-    const d = +dmgM[1];
-    if(isOpponent){ game.life -= d; log("🤖 ⚙ "+perm.name+" (ETB): "+d+" Schaden an dir \u2014 Leben "+game.life+"."); checkGameEnd(); }
-    else if(game.opp){ game.opp.life -= d; log("⚙ "+perm.name+" (ETB): "+d+" Schaden am Gegner \u2014 dessen Leben "+game.opp.life+"."); checkGameEnd(); }
-    did = true;
-  }
-  // ETB: Leben gewinnen
-  const lifeM = txt.match(/you gain (\d+) life/);
-  if(lifeM && /enters?|when/.test(txt)){
-    const g = +lifeM[1];
-    if(isOpponent){ game.opp.life += g; log("🤖 ⚙ "+perm.name+" (ETB): Gegner +"+g+" Leben ("+game.opp.life+")."); }
-    else { game.life += g; log("⚙ "+perm.name+" (ETB): Du +"+g+" Leben ("+game.life+")."); }
-    did = true;
-  }
-  // Nicht erfasster ETB-Text → Hinweis
-  if(!did && /when|whenever/.test(txt) && /enters? (?:the )?battlefield/.test(txt)){
-    log("⚙ "+who+": "+perm.name+" hat einen ins-Spiel-Kommen-Effekt, der vereinfacht nicht ausgeführt wird (im Protokoll manuell beachten).");
-  }
-}
-function applyLifelink(source, dmg, isOpponent){
-  const txt = (source.oracle||"").toLowerCase();
-  if(!txt.includes("lifelink") || dmg <= 0) return;
-  if(isOpponent){ game.opp.life += dmg; log("🤖 "+source.name+" (Lifelink): Gegner +"+dmg+" Leben ("+game.opp.life+")."); }
-  else { game.life += dmg; log(source.name+" (Lifelink): Du +"+dmg+" Leben ("+game.life+")."); }
 }
 
 function checkGameEnd(){
