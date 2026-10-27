@@ -103,6 +103,13 @@ mark { background: #6b5a1e; color: #ffe9a8; border-radius: 2px; }
 .zone { border: 1px solid var(--border); border-radius: 8px; padding: 10px; min-height: 90px; background: var(--bg2); }
 .zone h3 { margin-bottom: 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
 .perm { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; margin: 4px 0; display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+.permImg { width: 76px; flex-shrink: 0; cursor: pointer; border: 1px solid var(--border); border-radius: 6px; background: var(--bg3); padding: 3px; margin: 3px; text-align: center; position: relative; transition: transform .1s; }
+.permImg:hover { transform: translateY(-3px); border-color: var(--accent); z-index: 5; }
+.permImg img { width: 100%; border-radius: 4px; display: block; }
+.permImg .ppt { position: absolute; bottom: 5px; right: 5px; background: rgba(10,12,18,0.85); padding: 1px 5px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+.permImg .ptBadge { position: absolute; top: 4px; left: 4px; background: rgba(10,12,18,0.85); padding: 1px 5px; border-radius: 4px; font-size: 10px; }
+.permImg .zoomHint { font-size: 9px; color: var(--muted); display: block; margin-top: 2px; }
+.battlefieldWrap, #oppBattlefield { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 2px; }
 .perm.tapped { transform: rotate(2deg); opacity: .75; }
 .perm .pname { cursor: pointer; }
 .perm .psub { color: var(--muted); font-size: 11px; }
@@ -431,12 +438,12 @@ const jsAttr = s => String(s ?? "").replace(/\\/g,"\\\\").replace(/'/g,"\\'").re
 let toastTimer = null;
 /* ================= Universelles Klick-Menü ================= */
 let actionMenuResolve = null;
-function showActionMenu(title, info, buttons){
+function showActionMenu(title, info, buttons, imgHtml){
   // buttons: [{label, primary?, disabled?, sub?}, ...] -> Promise mit Index oder null (Abbruch)
   return new Promise(resolve => {
     actionMenuResolve = resolve;
     $("actionMenuTitle").textContent = title;
-    $("actionMenuInfo").textContent = info || "";
+    $("actionMenuInfo").innerHTML = (imgHtml || "") + (info ? esc(info).replace(/\n/g,"<br>") : "");
     $("actionMenuButtons").innerHTML = buttons.map((b,i) =>
       '<button'+(b.primary?' class="primary"':'')+(b.disabled?' disabled':'')+' onclick="actionMenuPick('+i+')">'+b.label+(b.sub?'<br><span style="font-size:11px;opacity:0.7">'+b.sub+'</span>':'')+'</button>').join("");
     $("actionMenu").classList.add("open");
@@ -2645,23 +2652,102 @@ function renderPlay(){
   $("stPhase").textContent = phaseName();
   $("stOppLife").textContent = game.opp ? game.opp.life : "—";
   $("oppHand").textContent = game.opp ? game.opp.hand.length + " Karten (verdeckt)" : "";
-  $("oppBattlefield").innerHTML = game.opp ? game.opp.battlefield.map(p =>
-    '<div class="perm'+(p.tapped?" tapped":"")+'"><span class="pname">'+esc(p.name)+'</span>'
-    + (p.pow ? '<span class="ppt">'+p.pow+'/'+p.tou+'</span>' : (p.kind==="land" ? '<span class="psub">Land</span>' : ""))
-    + '</div>').join("") : "";
+  $("oppBattlefield").innerHTML = game.opp ? game.opp.battlefield.map(p => permCardHtml(p, null, true)).join("") : "";
   $("oppGraveyard").textContent = game.opp ? game.opp.graveyard.map(c=>c.name).join(", ") : "";
   const pips = { W:"sym-w",U:"sym-u",B:"sym-b",R:"sym-r",G:"sym-g",C:"sym-c" };
   $("manaPips").innerHTML = game.manaPool.map(m=>'<span class="mana '+pips[m]+'">'+(m==="C"?"◇":m)+'</span>').join("");
   $("handRow").innerHTML = game.hand.map((c,i) =>
     '<div class="handCard" onclick="handAction('+i+')">'+(c.img?'<img loading="lazy" src="'+c.img+'">':'<div style="padding:4px"><b>'+esc(c.name)+'</b><br>'+manaHTML(c.mana_cost)+'</div>')+'</div>').join("");
-  $("battlefield").innerHTML = game.battlefield.map((p,i) =>
-    '<div class="perm'+(p.tapped?" tapped":"")+'" onclick="permAction('+i+')"><span class="pname">'+esc(p.name)+(p.kind==="land"?" <span class='psub'>(Land)</span>":"")+'</span>'
-    + (p.pow ? '<span class="ppt">'+p.pow+'/'+p.tou+'</span>' : (p.counters ? '<span class="ppt">'+p.counters+'</span>' : ""))
-    + '</div>').join("");
+  $("battlefield").innerHTML = game.battlefield.map((p,i) => permCardHtml(p, i, false)).join("");
   $("graveyard").innerHTML = game.graveyard.map(c=>esc(c.name)).join(", ") || "—";
   $("playLog").innerHTML = game.log.map(l=>"<div>"+esc(l)+"</div>").join("");
   $("playLog").scrollTop = 1e9;
 }
+/* ===== Schlachtfeld-Karten mit Bild + Zoom ===== */
+function permCardHtml(p, idx, isOpp){
+  const img = p.img || (p.image_uris ? p.image_uris.normal : "") || (p.card_faces && p.card_faces[0] && p.card_faces[0].image_uris ? p.card_faces[0].image_uris.normal : "");
+  const large = p.img ? p.img.replace("/normal/","/large/") : (p.image_uris ? p.image_uris.large : "") || img;
+  const dataAttrs = 'data-name="'+esc(p.name||"")+'" data-oracle="'+esc((p.oracle||"").slice(0,300))+'" data-type="'+esc(p.type_line||"")+'" data-img="'+esc(large||"")+'" data-pow="'+esc(p.pow||"")+'" data-tou="'+esc(p.tou||"")+'" data-loyalty="'+((p.type_line||"").includes("Planeswalker") && p.counters!==undefined ? p.counters : "")+'"';
+  const inner = img
+    ? '<img loading="lazy" src="'+img+'" alt="'+esc(p.name)+'">'
+      + (p.pow ? '<span class="ppt">'+p.pow+'/'+p.tou+'</span>' : "")
+      + ((p.type_line||"").includes("Planeswalker") && p.counters !== undefined ? '<span class="ptBadge">✦'+p.counters+'</span>' : (p.counters > 0 && !p.pow ? '<span class="ptBadge">+'+p.counters+'</span>' : ""))
+      + (p.tapped ? '<span class="ptBadge" style="left:auto;right:4px;background:rgba(196,81,59,0.9)">getappt</span>' : "")
+      + '<span class="zoomHint">🔍 Tippen für Aktionen</span>'
+    : '<div style="padding:5px 3px"><b style="font-size:11px">'+esc(p.name)+'</b>'
+      + (p.pow ? '<br><span>'+p.pow+'/'+p.tou+'</span>' : (p.kind==="land" ? " (Land)" : ""))
+      + (p.counters ? '<br><span>Marken: '+p.counters+'</span>' : "")
+      + '</div>';
+  const onclick = isOpp ? ' onclick="zoomCardFromData(this)"' : ' onclick="event.stopPropagation(); permZoomOrMenu('+idx+', this)"';
+  return '<div class="'+(img ? "permImg" : "perm")+(p.tapped?" tapped":"")+'"'+dataAttrs+onclick+'>'+inner+'</div>';
+}
+async function permZoomOrMenu(idx, el){
+  const p = game.battlefield[idx]; if(!p) return;
+  const img = p.img ? p.img.replace("/normal/","/large/") : (p.image_uris ? p.image_uris.large : "");
+  const isLand = p.kind === "land";
+  const isPW = (p.type_line||"").includes("Planeswalker");
+  const isCreature = (p.type_line||"").includes("Creature");
+  const buttons = [];
+  if(isLand && !p.tapped) buttons.push({ label: "⚡ Für Mana tappen → {"+landColor(p)+"}", primary: true });
+  if(!isLand) buttons.push({ label: p.tapped ? "Enttappen" : "Tappen (manuell)" });
+  if(isCreature){
+    buttons.push({ label: "⚔ Angreifen", primary: true, disabled: !(!p.tapped && game.phase === 3),
+      sub: game.phase !== 3 ? "Nur in der Kampfphase (aktuell: "+phaseName()+")" : "Als Angreifer deklarieren" });
+  }
+  if(isPW){
+    parsePwAbilities(p.oracle).forEach(ab => {
+      buttons.push({ label: "✦ ["+(ab.cost>0?"+":"")+ab.cost+"] "+ab.label, disabled: !(!p.pwUsed && p.counters + ab.cost >= 0),
+        sub: "Loyalität "+p.counters+" → "+(p.counters+ab.cost) });
+    });
+  }
+  const imgTag = img ? '<img src="'+img+'" style="width:100%;max-width:260px;border-radius:8px;display:block;margin:0 auto 8px">' : "";
+  const pick = await showActionMenu(p.name, (p.oracle||"").slice(0,180), buttons, imgTag);
+  if(pick === null) return;
+  if(isLand && pick === 0 && !p.tapped){
+    p.tapped = true;
+    game.manaPool.push(landColor(p));
+    log("Für Mana getappt: "+p.name+" → {"+landColor(p)+"}");
+    renderPlay(); return;
+  }
+  if(!isLand){
+    if(pick === 0){ p.tapped = !p.tapped; log(p.name+" "+(p.tapped?"getappt":"enttappt")); renderPlay(); return; }
+    if(isCreature && pick === 1){
+      const txt = (p.oracle||"").toLowerCase();
+      if((p.type_line||"").toLowerCase().includes("defender")){ toast(p.name+" hat Defender (702.3)."); return; }
+      if(p.turnPlayed === game.turn && !txt.includes("haste")){ toast("Einsatzverzögerung (302.6). Nächstes Zug."); return; }
+      const vigil = txt.includes("vigilance");
+      p.tapped = !vigil; p.attacking = true;
+      log("Angreifer deklariert: "+p.name+(vigil?" [Wachsamheit]":""));
+      renderPlay(); return;
+    }
+    if(isPW){
+      const pwBase = isCreature ? 2 : 1;
+      const pwChoice = pick - pwBase;
+      const abilities = parsePwAbilities(p.oracle);
+      if(pwChoice >= 0 && pwChoice < abilities.length){
+        const ab = abilities[pwChoice];
+        p.counters += ab.cost; p.pwUsed = true;
+        applyPwEffect(p, ab, false);
+        log("✦ "+p.name+" ["+(ab.cost>0?"+":"")+ab.cost+"]: "+ab.label+" — Loyalität: "+p.counters+".");
+        if(p.counters <= 0){ game.battlefield = game.battlefield.filter(x=>x!==p); game.graveyard.push(p); }
+        renderPlay(); return;
+      }
+    }
+  }
+}
+function zoomCardFromData(el){
+  const name = el.getAttribute("data-name") || "";
+  const img = el.getAttribute("data-img") || "";
+  const oracle = el.getAttribute("data-oracle") || "";
+  const type = el.getAttribute("data-type") || "";
+  const pow = el.getAttribute("data-pow") || "";
+  const tou = el.getAttribute("data-tou") || "";
+  const loy = el.getAttribute("data-loyalty") || "";
+  showActionMenu("🤖 Gegner: "+name,
+    (pow ? pow+"/"+tou+(loy?" · Loyalität "+loy:"") : (type.includes("Land") ? "Land" : "")) + "\n" + oracle,
+    [], img ? '<img src="'+img+'" style="width:100%;max-width:280px;border-radius:8px;display:block;margin:0 auto 8px">' : "");
+}
+
 function log(msg){ if(game) game.log.push(msg); }
 
 /* ================= Tabs & init ================= */
