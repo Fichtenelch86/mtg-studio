@@ -2123,6 +2123,45 @@ async function handAction(idx){
   else if(act.label.startsWith("\u2728 Zauber")){ castSpell(idx); }
   else if(act.label.startsWith("\u{1F5D1}")){ game.hand.splice(idx,1); game.graveyard.push(c); log("Karte abgelegt: "+c.name); renderPlay(); }
 }
+/* ===== Mana-Kosten-Utilities ===== */
+function parseCost(manaCost){
+  // "{2}{R}{R}" -> { C:2, R:2 }
+  const out = { C: 0, W: 0, U: 0, B: 0, R: 0, G: 0 };
+  if(!manaCost) return out;
+  const symbols = manaCost.match(/\{(\d+|[WUBRGC]|X)\}/g) || [];
+  for(const s of symbols){
+    const inner = s.slice(1, -1);
+    if(/^\d+$/.test(inner)) out.C += parseInt(inner);
+    else if(inner !== "X") out[inner] = (out[inner]||0) + 1;
+  }
+  return out;
+}
+function poolCount(){
+  // Zaehlt den Mana-Pool: { C:0, W:1, ... }
+  const out = { C: 0, W: 0, U: 0, B: 0, R: 0, G: 0 };
+  for(const m of (game ? game.manaPool : [])) out[m] = (out[m]||0) + 1;
+  return out;
+}
+function canPay(card){
+  const cost = parseCost(card.mana_cost);
+  const pool = poolCount();
+  let total = 0;
+  for(const col of ["C","W","U","B","R","G"]) total += pool[col]||0;
+  // farbige muessen exakt vorhanden sein, Rest als generisch
+  let generic = cost.C;
+  for(const col of ["W","U","B","R","G"]){
+    if((pool[col]||0) < (cost[col]||0)) return false;
+    generic += 0; // farbige deckung separat geprueft
+  }
+  // verfuegbares Mana nach farbiger Deckung:
+  let avail = total;
+  for(const col of ["W","U","B","R","G"]) avail -= cost[col]||0;
+  return avail >= generic;
+}
+function costSummary(card){
+  return card.mana_cost || "\u2014";
+}
+
 function playLand(idx){
   const c = game.hand.splice(idx,1)[0];
   game.battlefield.push({ ...c, kind: "land", tapped: false });
