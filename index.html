@@ -144,7 +144,7 @@ mark { background: #6b5a1e; color: #ffe9a8; border-radius: 2px; }
   <div class="panel">
     <h2>Kartensuche</h2>
     <div class="row">
-      <input id="q" style="flex:1; min-width:220px" placeholder="Suche (Name, Kartentext, Scryfall-Syntax z.B. t:creature o:flying c>2)...">
+      <input id="q" style="flex:1; min-width:220px" placeholder="Suche nach Kartenname (z.B. Lightning Bolt, Blitzschlag) — Edition/Kartentext über Filter...">
       <button class="primary" onclick="runSearch()">Suchen</button>
       <label style="display:flex;align-items:center;gap:6px;white-space:nowrap"><input type="checkbox" id="allPrintsChk" onchange="toggleAllPrints(this)" style="width:auto"> Alle Editionen</label>
     </div>
@@ -411,7 +411,12 @@ let searchPage = 1;
 function buildQuery(){
   const parts = [];
   const q = $("q").value.trim();
-  if(q) parts.push(q);
+  if(q){
+    // Freies Suchfeld = NUR Kartennamen-Suche (name:). Edition-Suche ueber den e:-Filter.
+    // Erkennung: enthaelt der Text schon Scryfall-Filter (z.B. o:, t:, c>), nicht umschliessen.
+    if(!/[:<>=]/.test(q)) parts.push("name:"+q);
+    else parts.push(q);
+  }
   const cols = [...document.querySelectorAll(".fcol:checked")].map(c=>c.value);
   if(cols.length){
     const mode = $("colMode").value === "exact" ? "c=" : "c>=";
@@ -789,6 +794,7 @@ function bulkSearch(query, page){
   const fType = val(/\bt:([\w-]+)/i), fO = val(/\bo:([\w-]+)/i),
         fR = val(/\br:(\w+)/i), fE = val(/\be:([\w-]+)/i), fF = val(/\bf:(\w+)/i);
   const fMv = query.match(/\bmv([<>=]+)\s*(\d+)/i), fPow = query.match(/\bpow\s*(>=|<=|=)\s*([\d*]+|x)/i), fTou = query.match(/\btou\s*(>=|<=|=)\s*([\d*]+|x)/i);
+  query = query.replace(/\bname:(\S+)/g, "$1");  // name:-Qualifier = normale Namenssuche
   let freeText = query
     .replace(/\b(t|o|c|mv|pow|tou)\s*(:|=|>=|<=|>|<)\s*[\w-]+/gi, " ")
     .replace(/\b(t|o|c)\s*:\s*[\w-]+/gi, " ")
@@ -802,7 +808,12 @@ function bulkSearch(query, page){
   let total = 0;
   for(const c of cardDB){
     let ok = true;
-    if(freeText && !c.full.toLowerCase().includes(freeText) && !(c.oracle||"").toLowerCase().includes(freeText)) ok = false;
+    // Freie Suche: NUR Kartenname (inkl. deutscher Name) — nicht Edition/Kartentext.
+    // Fuer Textsuche: Filter "Text enthält" (o:) oder o:-Syntax verwenden.
+    if(freeText){
+      const nm = (c.name + " " + (c.de_name||"")).toLowerCase();
+      if(!nm.includes(freeText)) ok = false;
+    }
     if(ok && fType && !c.type_line.toLowerCase().includes(fType)) ok = false;
     if(ok && fO && !c.oracle.toLowerCase().includes(fO)) ok = false;
     if(ok && fR && c.rarity !== fR) ok = false;
@@ -1507,7 +1518,59 @@ function renderDeckStats(d){
     '<table><tr><th>Karten</th><td>'+cards.length+'</td><th>Länder</th><td>'+lands+' ('+Math.round(lands/cards.length*100)+'%)</td></tr>'
     + '<tr><th>Kreaturen</th><td>'+creatures+'</td><th>Ø Mana-Wert</th><td>'+avgMv+'</td></tr></table>'
     + '<h3 style="margin-top:12px">Mana-Kurve</h3><div class="curveWrap"><div class="barchart">'+curveHTML+'</div></div>'
-    + '<h3 style="margin-top:8px">Farben (Mana-Symbole)</h3><p>'+ (pips||"—") +'</p>';
+    + '<h3 style="margin-top:8px">Farben (Mana-Symbole)</h3><p>'+ (pips||"—") +'</p>'
+    + '<h3 style="margin-top:12px">Zieh-Simulation</h3>'
+    + '<p class="muted" style="font-size:12px">Simuliert 50 Starthände: Hätte ich frühes Mana? Empfehlung vor dem Kartenkauf.</p>'
+    + '<button class="primary" onclick="runDrawSim()">🎲 50 Starthände simulieren</button>'
+    + '<div id="drawSimResult" style="margin-top:8px"></div>';
+}
+function runDrawSim(){
+  const d = allDecks().find(x=>x.id===currentDeckId);
+  const box = $("drawSimResult");
+  if(!d){ box.innerHTML = '<p class="muted">Kein Deck gewählt.</p>'; return; }
+  const pool = d.cards.flatMap(c => Array(c.qty).fill(c));
+  if(pool.length < 20){ box.innerHTML = '<p class="muted">Deck zu klein für eine aussagekräftige Simulation (min. 20 Karten).</p>'; return; }
+  const N = 50;
+  const landCounts = {}, thirdLandTurn = [], mulCount = [], playable2 = [];
+  for(let n=0;n<N;n++){
+    const lib = pool.slice();
+    for(let ii=lib.length-1;ii>0;ii--){ const jj = Math.floor(Math.random()*(ii+1)); [lib[ii],lib[jj]]=[lib[jj],lib[ii]]; }
+    const hand = lib.slice(0,7);
+    const lands = hand.filter(c=>(c.type_line||"").includes("Land")).length;
+    landCounts[lands] = (landCounts[lands]||0)+1;
+    if(lands <= 1 || lands >= 6) mulCount.push(lands);
+    let turn3 = 0, landsDrawn = lands;
+    for(let t=2;t<=6 && landsDrawn<3;t++){
+      const card = lib[6+(t-2)];
+      if(card && (card.type_line||"").includes("Land")) landsDrawn++;
+      if(landsDrawn>=3){ turn3 = t; break; }
+    }
+    if(landsDrawn>=3 && !turn3) turn3 = 6;
+    thirdLandTurn.push(turn3);
+    playable2.push(hand.some(c=>!(c.type_line||"").includes("Land") && (c.cmc||0) <= 2) ? 1 : 0);
+  }
+  const sorted = thirdLandTurn.filter(t=>t>0).sort((a,b)=>a-b);
+  const avg3 = sorted.length ? (sorted.reduce((s,t)=>s+t,0)/sorted.length).toFixed(1) : "—";
+  const never3 = thirdLandTurn.filter(t=>t===0).length;
+  const good = sorted.filter(t=>t<=3).length;
+  const p2 = Math.round(playable2.reduce((s,x)=>s+x,0)/N*100);
+  const landDist = [0,1,2,3,4,5,6,7].map(l => (landCounts[l]||0) ? l+"L: "+(landCounts[l]||0)+"× " : "").filter(Boolean).join("· ");
+  const landPct = pool.filter(c=>(c.type_line||"").includes("Land")).length / pool.length * 100;
+  let verdict, color;
+  if(landPct < 32){ verdict = "Zu wenige Länder ("+Math.round(landPct)+"%) — Manaloch-Gefahr. Empfehlung: mehr Länder."; color = "#e07a6a"; }
+  else if(landPct > 48){ verdict = "Viele Länder ("+Math.round(landPct)+"%) — Gefahr von Landflut. Prüfen, ob weniger reichen."; color = "#e0b06a"; }
+  else { verdict = "Länderanteil im grünen Bereich ("+Math.round(landPct)+"%)."; color = "#7dbb6a"; }
+  box.innerHTML =
+    '<table>'
+    + '<tr><th>Starthände mit 2–4 Ländern</th><td>'+(N-mulCount.length-(landCounts[5]||0))+"/"+N+'</td></tr>'
+    + '<tr><th>Mulligan-Risiko (≤1 oder ≥5 Länder)</th><td>'+mulCount.length+'/'+N+'</td></tr>'
+    + '<tr><th>3. Land gelegt Ø bis Zug</th><td>'+avg3+'</td></tr>'
+    + '<tr><th>3. Land bis Zug 3 geschafft</th><td>'+good+'/'+N+'</td></tr>'
+    + '<tr><th>Nie 3. Land gezogen (bis Zug 6)</th><td>'+never3+'×</td></tr>'
+    + '<tr><th>Früh spielbar (MV≤2) in Starthand</th><td>'+p2+'%</td></tr>'
+    + '</table>'
+    + '<p style="margin-top:6px;font-size:12px">Länderverteilung: '+esc(landDist||"—")+'</p>'
+    + '<p style="color:'+color+';font-weight:600;margin-top:6px">'+esc(verdict)+'</p>';
 }
 
 function validateDeck(){
