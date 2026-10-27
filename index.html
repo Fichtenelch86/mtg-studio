@@ -122,6 +122,19 @@ mark { background: #6b5a1e; color: #ffe9a8; border-radius: 2px; }
 #progressbar { position: fixed; left: 0; top: 0; height: 3px; background: var(--accent); width: 0%; z-index: 200; transition: width .3s; }
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--bg3); border: 1px solid var(--accent); border-radius: 8px; padding: 10px 22px; z-index: 150; display: none; }
 @media (max-width: 800px) { #playArea { grid-template-columns: 1fr; } .grid2 { grid-template-columns: 1fr; } #modalBox img.cardimg { float: none; margin: 0 0 12px 0; } }
+.actionMenu { position:fixed; inset:0; background:rgba(10,12,18,0.75); display:none; align-items:center; justify-content:center; z-index:1000; padding:16px; }
+.actionMenu.open { display:flex; }
+.actionMenuBox { background:var(--bg-panel); border:1px solid var(--border); border-radius:10px; padding:16px; max-width:420px; width:100%; max-height:85vh; overflow-y:auto; }
+.actionMenuTitle { font-weight:700; font-size:15px; margin-bottom:4px; }
+.actionMenuInfo { color:var(--muted); font-size:12px; margin-bottom:10px; white-space:pre-wrap; }
+.actionMenuButtons { display:flex; flex-direction:column; gap:6px; }
+.actionMenuButtons button { text-align:left; padding:10px 12px; border-radius:6px; background:var(--bg); border:1px solid var(--border); color:var(--fg); cursor:pointer; font-size:13px; }
+.actionMenuButtons button:hover { background:var(--border); }
+.actionMenuButtons button.primary { background:var(--accent); color:#fff; font-weight:600; }
+.actionMenuButtons button:disabled { opacity:0.45; cursor:not-allowed; }
+.actionMenuCancel { margin-top:10px; width:100%; padding:8px; border-radius:6px; background:transparent; border:1px solid var(--border); color:var(--muted); cursor:pointer; }
+.perm.selectable { outline:2px solid #6bb3ff; cursor:pointer; }
+.perm.selectedBlocker { outline:3px solid #6bd66b; background:#2a3a2a; }
 </style>
 </head>
 <body>
@@ -402,6 +415,12 @@ mark { background: #6b5a1e; color: #ffe9a8; border-radius: 2px; }
 </main>
 
 <div id="modal"><div id="modalBox"><button id="modalClose" onclick="closeModal()">&times;</button><div id="modalContent"></div></div></div>
+<div class="actionMenu" id="actionMenu"><div class="actionMenuBox">
+    <div class="actionMenuTitle" id="actionMenuTitle"></div>
+    <div class="actionMenuInfo" id="actionMenuInfo"></div>
+    <div class="actionMenuButtons" id="actionMenuButtons"></div>
+    <button class="actionMenuCancel" onclick="closeActionMenu()">Abbrechen</button>
+  </div></div>
 <div class="toast" id="toast"></div>
 <script>
 "use strict";
@@ -410,6 +429,29 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const jsAttr = s => String(s ?? "").replace(/\\/g,"\\\\").replace(/'/g,"\\'").replace(/"/g,"&quot;").replace(/[<>]/g, "");
 let toastTimer = null;
+/* ================= Universelles Klick-Menü ================= */
+let actionMenuResolve = null;
+function showActionMenu(title, info, buttons){
+  // buttons: [{label, primary?, disabled?, sub?}, ...] -> Promise mit Index oder null (Abbruch)
+  return new Promise(resolve => {
+    actionMenuResolve = resolve;
+    $("actionMenuTitle").textContent = title;
+    $("actionMenuInfo").textContent = info || "";
+    $("actionMenuButtons").innerHTML = buttons.map((b,i) =>
+      '<button'+(b.primary?' class="primary"':'')+(b.disabled?' disabled':'')+' onclick="actionMenuPick('+i+')">'+b.label+(b.sub?'<br><span style="font-size:11px;opacity:0.7">'+b.sub+'</span>':'')+'</button>').join("");
+    $("actionMenu").classList.add("open");
+  });
+}
+function actionMenuPick(i){
+  // Erst Promise mit Pick-Wert auflösen, DANN Modal schliessen (ohne Abbruch-Resolution)
+  if(actionMenuResolve){ const r = actionMenuResolve; actionMenuResolve = null; r(i); }
+  $("actionMenu").classList.remove("open");
+}
+function closeActionMenu(){
+  $("actionMenu").classList.remove("open");
+  if(actionMenuResolve){ const r = actionMenuResolve; actionMenuResolve = null; r(null); }
+}
+
 function toast(msg){ const t = $("toast"); t.textContent = msg; t.style.display = "block"; clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.style.display="none", 2600); }
 function progress(p){ $("progressbar").style.width = (p*100)+"%"; if(p>=1) setTimeout(()=>progress(0), 500); }
 async function jfetch(url){ const r = await fetch(url); if(!r.ok) throw new Error("HTTP "+r.status+" bei "+url); return r.json(); }
@@ -1920,6 +1962,7 @@ function nextPhase(){
     game.battlefield.forEach(p => p.tapped = false);
     log("— Zug " + game.turn + " —");
     log("Verwahrungsphase: Permanente werden enttappt.");
+    game.battlefield.forEach(p=>{ p.tapped = false; p.pwUsed = false; });
     if(game.turn > 1){
       const c = game.library.pop();
       if(!c){ log("⚠ Bibliothek leer — nicht ziehen (Regel 104.3c: Zugversuch = Niederlage). Partie beendet."); endPlay(); return; }
@@ -2050,78 +2093,36 @@ function nextPhase(){
     log("Zug beendet (Aufräumschritt, Regel 514).");
     game.phase = 0;
     $("phaseBtn").textContent = "Beginne Zug "+(game.turn+1);
-    if(game && game.opp){ oppTurn(); if(game) log("Dein Zug " + (game.turn+1) + " — bereit."); }
+    if(game && game.opp){ oppTurn().then(()=>{ if(game) log("Dein Zug " + (game.turn+1) + " — bereit."); }); }
   }
   renderPlay();
 }
 
-function handAction(idx){
+async function handAction(idx){
   const c = game.hand[idx]; if(!c) return;
   const t = c.type_line || "";
   const isLand = t.includes("Land");
-  const info = [];
-  const actions = [];
-  if(!isMainPhase()) info.push("Aktuell: "+phaseName()+" \u2014 Länder/Zauber nur in einer Hauptphase spielbar (Regel 305.2a / 307.1). Klicke den Phasen-Button bis zur Hauptphase.");
+  const buttons = [];
+  const infos = [];
   if(isLand){
     if(isMainPhase()){
-      if(game.playedLand) info.push("Dieses Zug wurde schon ein Land gespielt (Regel 305.2b).");
-      else actions.push("Land spielen");
-    }
+      if(game.playedLand) infos.push("Dieses Zug wurde schon ein Land gespielt (Regel 305.2b).");
+      else buttons.push({ label: "\u274E\uFE0F Land spielen", primary: true, sub: "Auf das Schlachtfeld legen" });
+    } else infos.push("L\u00e4nder nur in einer Hauptphase spielbar (305.2a) \u2014 aktuell: "+phaseName());
   } else {
     if(isMainPhase()){
-      if(canPay(c)) actions.push("Zauber wirken");
-      else info.push("Nicht genug Mana ("+costSummary(c)+" nötig). Tippe zuerst Länder im Schlachtfeld an, um Mana zu erzeugen.");
-    }
+      if(canPay(c)) buttons.push({ label: "\u2728 Zauber wirken ("+costSummary(c)+")", primary: true, sub: (c.oracle||c.type_line||"").slice(0,80) });
+      else infos.push("Nicht genug Mana ("+costSummary(c)+" n\u00f6tig). Tippe L\u00e4nder im Schlachtfeld f\u00fcr Mana.");
+    } else infos.push("Zauber nur in einer Hauptphase (307.1) \u2014 aktuell: "+phaseName());
   }
-  actions.push("Karte ablegen (Friedhof) — bewusst");
-  const lines = actions.map((a,i)=>(i+1)+") "+a).join("\n");
-  const choice = prompt("Karte: "+c.name+"   [Phase: "+phaseName()+"]\n\n"+(c.oracle||c.type_line||"")+"\n\n"+(info.length?info.join("\n")+"\n\n":"")+"Aktion wählen:\n"+lines+"\n\nNummer eingeben (oder Abbrechen):");
-  if(choice === null) return;
-  const n = parseInt(choice);
-  if(isNaN(n) || n < 1 || n > actions.length){ toast("Ungültige Wahl — bitte Nummer 1\u2013"+actions.length+" eingeben."); return; }
-  const act = actions[n-1];
-  if(act === "Land spielen"){ playLand(idx); toast("Land gespielt: "+c.name); }
-  else if(act === "Zauber wirken"){ castSpell(idx); }
-  else if(act === "Karte ablegen (Friedhof) — bewusst"){ if(confirm(c.name+" wirklich auf den Friedhof legen?")){ game.graveyard.push(...game.hand.splice(idx,1)); log("Abgelegt: "+c.name); renderPlay(); } }
+  buttons.push({ label: "\u{1F5D1}\uFE0F Karte ablegen (Friedhof)", sub: "Bewusste Ablage (z.B. Aufr\u00e4umschritt)" });
+  const pick = await showActionMenu(c.name + "  ["+phaseName()+"]", (c.mana_cost ? c.mana_cost+" \u00b7 " : "") + (c.type_line||"") + "\n\n" + infos.join("\n"), buttons);
+  if(pick === null) return;
+  const act = buttons[pick];
+  if(act.label.startsWith("\u274E\uFE0F Land")){ playLand(idx); toast("Land gespielt: "+c.name); }
+  else if(act.label.startsWith("\u2728 Zauber")){ castSpell(idx); }
+  else if(act.label.startsWith("\u{1F5D1}")){ game.hand.splice(idx,1); game.graveyard.push(c); log("Karte abgelegt: "+c.name); renderPlay(); }
 }
-function costSummary(c){
-  const cost = parseCost(c.mana_cost);
-  const parts = [];
-  if(cost.C) parts.push(cost.C+" generisch");
-  ["W","U","B","R","G"].forEach(col=>{ if(cost[col]) parts.push("{"+col+"} x"+cost[col]); });
-  return parts.join(" + ") || "0";
-}
-
-function canPay(c){
-  // Farbige Mana dürfen generische Kosten bezahlen (Regel 202.4 / 118.1): erst farbige Kosten abziehen,
-  // dann prüfen, ob der Rest (farbig + farblos) die generischen Kosten deckt.
-  const cost = parseCost(c.mana_cost);
-  const pool = poolCount();
-  let coloredLeft = 0;
-  for(const col of ["W","U","B","R","G"]){
-    if((pool[col]||0) < (cost[col]||0)) return false;
-    coloredLeft += Math.max(0, (pool[col]||0) - (cost[col]||0));
-  }
-  return (pool.C + coloredLeft) >= cost.C;
-}
-function parseCost(mc){
-  const out = { C: 0, W: 0, U: 0, B: 0, R: 0, G: 0 };
-  if(!mc) return out;
-  let generic = 0;
-  (mc.match(/\{[^}]+\}/g)||[]).forEach(sym => {
-    const s = sym.slice(1,-1);
-    if(/^\d+$/.test(s)) generic += +s;
-    else if(["W","U","B","R","G"].includes(s)) out[s]++;
-    else if(/^\d\/[WUBRG]$/.test(s)) { out[s[2]]++; }
-    else if(/^[WUBRG]\/[WUBRG]$/.test(s)) { out[s[0]]++; } // simplified hybrid
-    else if(/^\d$/.test(s)) generic += +s;
-    else generic += 1; // X etc. simplified
-  });
-  out.C = generic;
-  return out;
-}
-function poolCount(){ const p = { C:0, W:0, U:0, B:0, R:0, G:0 }; game.manaPool.forEach(m=>p[m]++); return p; }
-
 function playLand(idx){
   const c = game.hand.splice(idx,1)[0];
   game.battlefield.push({ ...c, kind: "land", tapped: false });
@@ -2162,39 +2163,76 @@ function castSpell(idx){
   }
   renderPlay();
 }
-function permAction(idx){
+async function permAction(idx){
   const p = game.battlefield[idx]; if(!p) return;
+  // --- Land: fuer Mana tappen (Klick-Menue) ---
   if(p.kind === "land"){
-    if(p.tapped){ toast(p.name+" ist bereits getappt — {T} nur einmal pro Aktivierung möglich (Regel 106.12)."); return; }
-    const choice = confirm("Land: "+p.name+"\n\nOK = für Mana tappen ({T}: 1 farbloses oder farbiges Mana)\nAbbrechen = nichts tun");
-    if(choice){
+    if(p.tapped){ toast(p.name+" ist bereits getappt \u2014 {T} nur einmal pro Aktivierung (Regel 106.12)."); return; }
+    const col = landColor(p);
+    const pick = await showActionMenu(p.name, "Land \u2014 f\u00fcr Mana tappen?", [
+      { label: "F\u00fcr Mana tappen \u2192 {"+col+"}", primary: true, sub: "F\u00fcgt 1 Mana deinem Mana-Pool hinzu" },
+    ]);
+    if(pick === 0){
       p.tapped = true;
-      const col = landColor(p);
       game.manaPool.push(col);
-      log("Für Mana getappt: "+p.name+" → {"+col+"}");
+      log("F\u00fcr Mana getappt: "+p.name+" \u2192 {"+col+"}");
       renderPlay();
     }
-  } else {
-    const isCreature = (p.type_line||"").includes("Creature");
-    const acts = ["Tappen/Enttappen"];
-    if(isCreature) acts.push("Mit Kreatur angreifen (Kampf)");
-    acts.push("Hinweis: Opfern ist nur via Zauber/Fähigkeit möglich (Regel 701.2) — nicht frei wählbar.");
-    const menu = acts.map((a,i)=>(i+1)+") "+a).join("\n");
-    const choice = prompt("Permanent: "+p.name+(p.pow?" ("+p.pow+"/"+p.tou+")":"")+"\n\n"+menu+"\n\nNummer:");
-    if(choice === "1"){ p.tapped = !p.tapped; log(p.name+" "+(p.tapped?"getappt":"enttappt")); renderPlay(); }
-    else if(isCreature && choice === "2"){
-      if(p.tapped){ toast("Getappte Kreaturen greifen nicht an (Regel 508.1a)."); return; }
-      if(game.phase !== 3){ toast("Angriff nur in der Kampfphase (Regel 508) — aktuell: "+phaseName()); return; }
-      const txt = (p.oracle||"").toLowerCase();
-      if((p.type_line||"").toLowerCase().includes("defender")){ toast(p.name+" hat Defender — kann nicht angreifen (Regel 702.3)."); return; }
-      if(txt.includes("can't attack") || txt.includes("cannot attack")){ toast("Kartentext von "+p.name+" verbietet den Angriff."); return; }
-      if(p.turnPlayed === game.turn && !txt.includes("haste")){ toast("Einsatzverzögerung: "+p.name+" wurde dieses Zug gespielt und hat kein Hast (Regel 302.6). Nächstes Zug angreifbar."); return; }
-      const vigil = (p.oracle||"").toLowerCase().includes("vigilance");
-      p.tapped = !vigil; p.attacking = true;  // Wachsamkeit: angreifen ohne Tappen (Regel 702.20)
-      log("Angreifer deklariert: "+p.name+(p.pow?" — Schaden bei unblockiertem Angriff: "+p.pow:"")+(vigil?" [Wachsamheit: bleibt ungetappt]":""));
+    return;
+  }
+  // --- Kreatur / Artifact / Planeswalker ---
+  const isCreature = (p.type_line||"").includes("Creature");
+  const isPW = (p.type_line||"").includes("Planeswalker");
+  const buttons = [];
+  // 1) Tappen/Enttappen
+  buttons.push({ label: p.tapped ? "Enttappen" : "Tappen (manuell)", sub: "Markierung \u00e4ndern (z.B. f\u00fcr F\u00e4higkeiten)" });
+  // 2) Angriff (nur Kreatur, nur Kampfphase)
+  if(isCreature){
+    const canAttack = !p.tapped && game.phase === 3;
+    buttons.push({ label: "\u2694 Angreifen", primary: true, disabled: !canAttack,
+      sub: !p.tapped && game.phase !== 3 ? "Nur in der Kampfphase m\u00f6glich (aktuell: "+phaseName()+")" : (p.tapped ? "Getappte Kreaturen greifen nicht an (508.1a)" : "Als Angreifer deklarieren") });
+  }
+  // 3) Planeswalker-Faehigkeiten
+  if(isPW){
+    const abilities = parsePwAbilities(p.oracle);
+    abilities.forEach(ab => {
+      const usable = !p.pwUsed && p.counters + ab.cost >= 0;
+      buttons.push({ label: "\u2728 ["+(ab.cost>0?"+":"")+ab.cost+"] "+ab.label,
+        disabled: !usable,
+        sub: p.pwUsed ? "Diesen Zug bereits genutzt (606.3)" : (p.counters + ab.cost < 0 ? "Nicht genug Loyalit\u00e4t ("+p.counters+")" : "Loyalit\u00e4t: "+p.counters+" \u2192 "+(p.counters+ab.cost)) });
+    });
+  }
+  const info = (p.oracle||"").slice(0, 220) + (p.pow ? "\n"+p.pow+"/"+p.tou : "") + (isPW ? "\nLoyalit\u00e4t: "+p.counters : "");
+  const pick = await showActionMenu(p.name + (isCreature ? " ("+p.pow+"/"+p.tou+")" : ""), info, buttons);
+  if(pick === null) return;
+  if(pick === 0){ p.tapped = !p.tapped; log(p.name+" "+(p.tapped?"getappt":"enttappt")); renderPlay(); return; }
+  if(isCreature && pick === 1){
+    // Angriff
+    const txt = (p.oracle||"").toLowerCase();
+    if((p.type_line||"").toLowerCase().includes("defender")){ toast(p.name+" hat Defender \u2014 kann nicht angreifen (702.3)."); return; }
+    if(txt.includes("can't attack") || txt.includes("cannot attack")){ toast("Kartentext von "+p.name+" verbietet den Angriff."); return; }
+    if(p.turnPlayed === game.turn && !txt.includes("haste")){ toast("Einsatzverz\u00f6gerung: "+p.name+" (Regel 302.6). N\u00e4chstes Zug angreifbar."); return; }
+    const vigil = txt.includes("vigilance");
+    p.tapped = !vigil; p.attacking = true;
+    log("Angreifer deklariert: "+p.name+(p.pow?" \u2014 Schaden bei unblockiertem Angriff: "+p.pow:"")+(vigil?" [Wachsamheit: bleibt ungetappt]":""));
+    renderPlay(); return;
+  }
+  // Planeswalker-Faehigkeit (Index nach Basis-Buttons)
+  if(isPW){
+    const pwBase = isCreature ? 2 : 1;
+    const pwChoice = pick - pwBase;
+    const abilities = parsePwAbilities(p.oracle);
+    if(pwChoice >= 0 && pwChoice < abilities.length){
+      const ab = abilities[pwChoice];
+      p.counters += ab.cost;
+      p.pwUsed = true;
+      applyPwEffect(p, ab, false);
+      log("\u2728 "+p.name+" nutzt ["+(ab.cost>0?"+":"")+ab.cost+"]: "+ab.label+" \u2014 Loyalit\u00e4t: "+p.counters+".");
+      if(p.counters <= 0){
+        game.battlefield = game.battlefield.filter(x => x !== p); game.graveyard.push(p);
+        log("\u2716 "+p.name+" verl\u00e4sst das Schlachtfeld (0 Loyalit\u00e4t, Regel 704.5i).");
+      }
       renderPlay();
-    } else if(!isCreature && choice === "2"){
-      toast("Opfern ist nur über Zauber oder Fähigkeiten möglich (Regel 701.2).");
     }
   }
 }
@@ -2257,11 +2295,11 @@ function applySimpleOppSpell(c){
   const dmgM = txt.match(/deals? ([0-9]+) damage/);
   if(dmgM){ const d = +dmgM[1]; game.life -= d; log("🤖 "+c.name+": "+d+" Schaden an dir (Leben "+game.life+")."); checkGameEnd(); }
 }
-function oppTurn(){
+async function oppTurn(){
   if(!game || !game.opp) return;
   const o = game.opp;
   log("\u2014 🤖 Gegner-Zug "+(game.turn+1)+" \u2014");
-  o.battlefield.forEach(p=>p.tapped = false);
+  o.battlefield.forEach(p=>{ p.tapped = false; p.pwUsed = false; });
   const drawn = o.library.pop();
   if(drawn) o.hand.push(drawn);
   else { log("🤖 Gegner kann nicht ziehen \u2014 Regel 104.3c w\u00FCrde Niederlage bedeuten (vereinfacht ignoriert)."); }
@@ -2293,6 +2331,24 @@ function oppTurn(){
     }
     if(best >= 0){ oppPayAndCast(best); casted = true; }
   }
+  // Planeswalker-Faehigkeiten: KI nutzt die erste nutzbare (vereinfacht, Regel 606.3: 1x/Zug)
+  o.battlefield.filter(p => (p.type_line||"").includes("Planeswalker") && !p.pwUsed).forEach(p => {
+    const abilities = parsePwAbilities(p.oracle);
+    const usable = abilities.filter(a => p.counters + a.cost >= 0);
+    if(usable.length){
+      const ab = usable[0];
+      p.counters += ab.cost;
+      p.pwUsed = true;
+      log("🤖 ✨ Gegner nutzt "+p.name+" ["+(ab.cost>0?"+":"")+ab.cost+"]: "+ab.label+" — Loyalität: "+p.counters+".");
+      applyPwEffect(p, ab, true);
+      if(p.counters <= 0){
+        const i = o.battlefield.indexOf(p);
+        if(i>=0){ o.battlefield.splice(i,1); o.graveyard.push(p); }
+        log("🤖 ✖ "+p.name+" verlässt das Schlachtfeld (0 Loyalität).");
+      }
+    }
+  });
+
   // Kampf: Einsatzverzögerung (Regel 302.6), Defender und "can't attack"-Kartentexte respektieren
   const canAtk = p => {
     if(p.kind !== "perm" || p.tapped) return false;
@@ -2309,7 +2365,7 @@ function oppTurn(){
   if(atk.length){
     log("🤖 Gegner greift an mit "+atk.map(c=>c.name+" ("+c.pow+"/"+c.tou+")").join(", "));
     atk.forEach(a => { const vigil = (a.oracle||"").toLowerCase().includes("vigilance"); a.tapped = !vigil; });  // Wachsamheit: kein Tappen (702.20)
-    oppResolveCombat(atk);
+    await oppResolveCombat(atk);
   } else log("🤖 Gegner greift nicht an.");
   o.manaPool = [];
   renderPlay();
@@ -2358,6 +2414,68 @@ function applyLifelink(source, dmg, isOpponent){
   else { game.life += dmg; log(source.name+" (Lifelink): Du +"+dmg+" Leben ("+game.life+")."); }
 }
 
+/* ===== Planeswalker-Fähigkeiten (vereinfachte Auswertung, Regel 306.5) ===== */
+function parsePwAbilities(oracleText){
+  // Loyalitaets-Symbole: "+1:", "-2:", "0:", "-X:" etc. am Zeilen-/Absatzanfang
+  const out = [];
+  if(!oracleText) return out;
+  const re = /([+\-]?\d+|[-+]X):\s*([^+\-][^\n]*?)(?=\s*\+?\d+:|\s*[-+]X:|$)/g;
+  let m;
+  const text = oracleText.replace(/\r/g,"");
+  while((m = re.exec(text)) !== null){
+    const cost = m[1] === "-X" || m[1] === "+X" ? -2 : parseInt(m[1]);  // -X vereinfacht als -2
+    const label = m[2].trim().split(".")[0];
+    if(label.length > 2 && label.length < 120) out.push({ cost, label, full: m[2].trim() });
+  }
+  return out.slice(0, 4);
+}
+function applyPwEffect(pw, ab, isOpponent){
+  const txt = (ab.full||"").toLowerCase();
+  const who = isOpponent ? "🤖 Gegner" : "Du";
+  // +N Karten ziehen
+  const drawM = txt.match(/draw (?:a|one|two|three) cards?/);
+  if(drawM){
+    const n = /three/.test(drawM[0]) ? 3 : /two/.test(drawM[0]) ? 2 : 1;
+    for(let i=0;i<n;i++){
+      const lib = isOpponent ? game.opp.library : game.library;
+      const hand = isOpponent ? game.opp.hand : game.hand;
+      const c = lib.pop(); if(c) hand.push(c);
+    }
+    log("  → "+who+": "+n+" Karte(n) gezogen.");
+    return;
+  }
+  // Schaden an Kreatur/Gegner
+  const dmgM = txt.match(/deals? (\d+) damage/);
+  if(dmgM){
+    const d = +dmgM[1];
+    if(isOpponent){ game.life -= d; log("  → "+d+" Schaden an dir — Leben "+game.life+"."); }
+    else if(game.opp){ game.opp.life -= d; log("  → "+d+" Schaden am Gegner — dessen Leben "+game.opp.life+"."); }
+    checkGameEnd();
+    return;
+  }
+  // Kreaturen-Token erzeugen
+  const tokM = txt.match(/create (?:a|one|two|three|two 1\/1|[\w\s]*?)(\d)\/(\d)/);
+  if(tokM || txt.includes("create")){
+    const pow = tokM ? tokM[1] : 1, tou = tokM ? tokM[2] : 1;
+    const n = /two|three/.test(txt) ? (/three/.test(txt) ? 3 : 2) : 1;
+    for(let i=0;i<n;i++){
+      const tok = { name: "Token "+pow+"/"+tou, type_line: "Creature — Token", pow: String(pow), tou: String(tou), mana_cost: "", cmc: 0, oracle: "", kind: "perm", tapped: false, turnPlayed: game.turn, counters: 0 };
+      if(isOpponent) game.opp.battlefield.push(tok); else game.battlefield.push(tok);
+    }
+    log("  → "+who+": "+n+" Token ("+pow+"/"+tou+") erzeugt.");
+    return;
+  }
+  // Leben
+  const lifeM = txt.match(/you gain (\d+) life/);
+  if(lifeM){
+    const g = +lifeM[1];
+    if(isOpponent){ game.opp.life += g; } else { game.life += g; }
+    log("  → "+who+": +"+g+" Leben.");
+    return;
+  }
+  log("  ⚙ Effekt vereinfacht nicht ausgeführt: "+ab.label);
+}
+
 /* ===== Kampf-Fähigkeiten (vereinfachte Auswertung) ===== */
 function hasAbility(p, ab){ return (p.oracle||"").toLowerCase().includes(ab) || (p.keywords||[]).some(k => k.toLowerCase() === ab); }
 /* Ein Angreifer mit Fliegend kann nur von Blockern mit Fliegend/Reichweite geblockt werden (Regel 702.9b) */
@@ -2379,7 +2497,7 @@ function isLethal(dmg, target, source){
   return dmg >= (+target.tou || 0);
 }
 
-function oppResolveCombat(attackers){
+async function oppResolveCombat(attackers){
   // Blocker-Deklaration (vereinfacht): Jede deiner Kreaturen blockt genau EINEN Angreifer (Regel 509.1a).
   let totalDmg = 0;
   const available = game.battlefield.filter(p => p.kind==="perm" && (p.type_line||"").includes("Creature") && !p.attacking);
@@ -2389,13 +2507,18 @@ function oppResolveCombat(attackers){
     const blockers = available.filter(b => !used.has(b) && canBlock(atk, b));
     let blocked = null;
     if(blockers.length){
-      const opts = blockers.map((b,i)=>(i+1)+") "+b.name+" ("+b.pow+"/"+b.tou+")").join("\n");
-      const ch = prompt("\U0001F916 Angreifer: "+atk.name+" ("+atk.pow+"/"+atk.tou+")"+(hasAbility(atk,"first strike")?" [Erstschlag]":"")+(hasAbility(atk,"double strike")?" [Doppelschlag]":"")+"\n\nBlocken?\n0) Nein, Schaden nehmen\n"+opts+"\n\nNummer:");
-      if(ch !== null && ch !== "" && !isNaN(+ch) && +ch >= 1 && +ch <= blockers.length){
-        blocked = blockers[+ch-1];
+      const abilityTags = (hasAbility(atk,"first strike")?" [Erstschlag]":"")+(hasAbility(atk,"double strike")?" [Doppelschlag]":"")+(hasAbility(atk,"trample")?" [Trampeln]":"")+(hasAbility(atk,"deathtouch")?" [Todesber\u00fchrung]":"");
+      const buttons = blockers.map(b => ({ label: "\u{1F6E1}\uFE0F Blocken mit "+b.name, sub: b.name+" ("+b.pow+"/"+b.tou+")" + (hasAbility(b,"first strike")?" \u00b7 Erstschlag":"") + (hasAbility(b,"deathtouch")?" \u00b7 Todesber\u00fchrung":"") }));
+      buttons.push({ label: "\u26a1 Schaden nehmen ("+atk.pow+" Schaden)", sub: "Nicht blocken \u2014 direkt Leben verlieren" });
+      const pick = await showActionMenu("\U0001F916 Angreifer: "+atk.name+" ("+atk.pow+"/"+atk.tou+")"+abilityTags,
+        (atk.oracle||"").slice(0,150) + "\n\nMit welcher Kreatur blocken?", buttons);
+      if(pick !== null && pick < blockers.length){
+        blocked = blockers[pick];
         used.add(blocked);
         pairings.push({ atk, blocker: blocked });
       }
+    } else {
+      log("\U0001F916 "+atk.name+" ("+atk.pow+"/"+atk.tou+") \u2014 kein legaler Blocker verf\u00fcgbar, Schaden nehmen.");
     }
   }
   // ===== ERSTER Kampfschadens-Schritt (Erst-/Doppelschlag, Regel 702.7b) =====
