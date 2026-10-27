@@ -2091,6 +2091,7 @@ function nextPhase(){
         game.opp.life -= dmg;
         log("⚔ Deine Angreifer fügen dem Gegner insgesamt "+dmg+" Schaden zu — Gegner-Leben: "+game.opp.life+" (Regel 510.2).");
         myAtk.forEach(a => { if(game.battlefield.includes(a)){ applyLifelink(a, (+a.pow||0), false); applyEnergyTriggers(a, "combatDamage", false); } });
+        checkStateBasedDeaths();
         checkGameEnd();
       } else {
         const dmg = myAtk.reduce((s,a)=>s+(+a.pow||0),0) * (myAtk.some(a=>hasAbility(a,"double strike")) ? 1 : 1);
@@ -2610,10 +2611,65 @@ function hasDefender(p){
   return false;
 }
 
+/* ===== +1/+1-Marken-System (Regel 122, 704.5f) ===== */
+function addCounters(perm, n){
+  // +1/+1-Marken: effektive Werte mitzaehlen (vereinfacht: p.counters = Marken, pow/tou = Basis)
+  perm.counters = (perm.counters||0) + n;
+  perm.pow = String((+perm.pow||0) + n);
+  perm.tou = String((+perm.tou||0) + n);
+}
+function removeCounters(perm, n){
+  const have = perm.counters||0;
+  const take = Math.min(have, n);
+  perm.counters = have - take;
+  perm.pow = String((+perm.pow||0) - take);
+  perm.tou = String((+perm.tou||0) - take);
+}
+/* Effektive Werte fuer Kampfberechnung (Basis + Marken) */
+function effPow(p){ return (+p.pow||0); }
+function effTou(p){ return (+p.tou||0); }
+/* Wither/Infect: Schaden als -1/-1-Marken statt Marks (Regel 702.80 / 702.90) */
+function dealsWitherDamage(source){
+  const o = (source.oracle||"").toLowerCase();
+  return o.includes("wither") || o.includes("infect");
+}
+/* Schadensanwendung auf Kreatur: normaler Schaden wird bis Zugende ignoriert (vereinfacht),
+   Wither/Infect legt -1/-1-Marken. ZBA: tot bei tou <= 0 (Regel 704.5f). */
+function applyDamageToCreature(target, dmg, source){
+  if(dmg <= 0) return false;
+  if(source && dealsWitherDamage(source)){
+    // -1/-1-Marken: Stärke/Härte direkt senken (+1/+1-Annullierung vereinfacht)
+    target.pow = String((+target.pow||0) - dmg);
+    target.tou = String((+target.tou||0) - dmg);
+    log("  \u2192 "+target.name+" erhält "+dmg+" -1/-1-Marke(n) (Wither/Infect) \u2014 jetzt "+target.pow+"/"+target.tou+".");
+    return (+target.tou <= 0);
+  }
+  // normaler Schaden: nur Tod-Pruefung (Marks bis Zugende vereinfacht ignoriert)
+  return dmg >= effTou(target);
+}
+/* -1/-1 und +1/+1 annullieren sich (Regel 704.5q, vereinfacht ueber counters) */
+function checkStateBasedDeaths(){
+  // Kreaturen mit tou <= 0 sterben (704.5f)
+  const dead = game.battlefield.filter(p => p.kind==="perm" && (p.type_line||"").includes("Creature") && (+p.tou||0) <= 0);
+  dead.forEach(p => {
+    game.battlefield = game.battlefield.filter(x => x !== p);
+    game.graveyard.push(p);
+    log("\u2716 "+p.name+" stirbt (0 oder weniger H\u00e4rte, Regel 704.5f).");
+  });
+  if(game.opp){
+    const deadO = game.opp.battlefield.filter(p => p.kind==="perm" && (p.type_line||"").includes("Creature") && (+p.tou||0) <= 0);
+    deadO.forEach(p => {
+      game.opp.battlefield = game.opp.battlefield.filter(x => x !== p);
+      game.opp.graveyard.push(p);
+      log("\U0001F916 \u2714 Gegners "+p.name+" stirbt (Regel 704.5f).");
+    });
+  }
+}
+
 function isLethal(dmg, target, source){
   if(dmg <= 0) return false;
   if(source && hasAbility(source, "deathtouch")) return true;
-  return dmg >= (+target.tou || 0);
+  return dmg >= effTou(target);
 }
 
 async function oppResolveCombat(attackers){
@@ -2705,6 +2761,7 @@ async function oppResolveCombat(attackers){
     game.life -= totalDmg;
     log("\U0001F916 Kampfschaden gesamt: "+totalDmg+" \u2014 dein Leben: "+game.life+" (Regel 510.2).");
   }
+  checkStateBasedDeaths();  // Wither-Opfer mit tou<=0 sterben (704.5f)
   checkGameEnd();
 }
 
@@ -2827,6 +2884,11 @@ async function permZoomOrMenu(idx, el){
         sub: afford ? "Kosten: "+ab.cost+" Energie (du hast "+(game.energy||0)+")" : "Nicht genug Energie ("+ab.cost+" benötigt, "+(game.energy||0)+" vorhanden)" });
     });
   }
+  // +1/+1-Marken-Verwaltung (Regel 122): manuell fuer Effekte, die die Engine nicht ausfuehrt
+  if(isCreature || p.counters !== undefined){
+    buttons.push({ label: "➕ +1/+1-Marke setzen", sub: "Aktuell "+(p.counters||0)+" Marke(n) · "+p.pow+"/"+p.tou });
+    if((p.counters||0) > 0) buttons.push({ label: "➖ +1/+1-Marke entfernen", sub: "Aktuell "+(p.counters||0)+" Marke(n)" });
+  }
   const imgTag = img ? '<img src="'+img+'" style="width:100%;max-width:260px;border-radius:8px;display:block;margin:0 auto 8px">' : "";
   const pick = await showActionMenu(p.name, (p.oracle||"").slice(0,180), buttons, imgTag);
   if(pick === null) return;
@@ -2873,6 +2935,15 @@ async function permZoomOrMenu(idx, el){
           renderPlay(); return;
         } else { toast("Nicht genug Energie."); return; }
       }
+    }
+    // +1/+1-Marken-Verwaltung
+    const counterBase = (isCreature ? 2 : 1) + (isPW ? parsePwAbilities(p.oracle).length : 0) + ((p.oracle||"").includes("{E}") ? parseEnergyAbilities(p.oracle).length : 0);
+    const counterChoice = pick - counterBase;
+    const counterMenuCount = 1 + ((p.counters||0) > 0 ? 1 : 0);
+    if(counterChoice >= 0 && counterChoice < counterMenuCount){
+      if(counterChoice === 0){ addCounters(p, 1); log("➕ "+p.name+" erhält eine +1/+1-Marke — jetzt "+p.pow+"/"+p.tou+"."); }
+      else if(counterChoice === 1){ removeCounters(p, 1); log("➖ "+p.name+" verliert eine +1/+1-Marke — jetzt "+p.pow+"/"+p.tou+"."); }
+      renderPlay(); return;
     }
 }
 function zoomCardFromData(el){
