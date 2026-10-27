@@ -1741,9 +1741,9 @@ function nextPhase(){
           if(!oppBlockers.length) break;
           const legal = oppBlockers.filter(b => !usedOpp.has(b) && canBlock(a, b));
           if(!legal.length) continue;
-          const best = legal.map(b => ({ b, die: (+b.pow||0) >= (+a.tou||0) })).sort((x,y) => (y.die?1:0)-(x.die?1:0))[0];
+          const best = legal.map(b => ({ b, die: isLethal(+b.pow||0, a, b) })).sort((x,y) => (y.die?1:0)-(x.die?1:0))[0];  // Deathtouch: jeder Blocker-Schaden tödlich
           if(!best) continue;
-          const kills = (+best.b.pow||0) >= (+a.tou||0);
+          const kills = isLethal(+best.b.pow||0, a, best.b);
           const survives = (+a.pow||0) < (+best.b.tou||0);
           if(kills || survives){
             usedOpp.add(best.b);
@@ -1763,7 +1763,7 @@ function nextPhase(){
             const pair = pairings.find(p => p.atk === a);
             if(pair){
               const d = +a.pow||0;
-              if(d >= (+pair.blocker.tou||0)){
+              if(isLethal(d, pair.blocker, a)){
                 const i = game.opp.battlefield.indexOf(pair.blocker);
                 if(i>=0){ game.opp.battlefield.splice(i,1); game.opp.graveyard.push(pair.blocker); }
                 log("  ✖ "+pair.blocker.name+" stirbt im Erstschlag-Schritt ("+d+" Schaden, Härte "+pair.blocker.tou+").");
@@ -1780,7 +1780,7 @@ function nextPhase(){
           for(const p of firstStrikeBlk){
             if(!game.battlefield.includes(p.atk)) continue;
             const d = +p.blocker.pow||0;
-            if(d >= (+p.atk.tou||0)){
+            if(isLethal(d, p.atk, p.blocker)){
               const i = game.battlefield.indexOf(p.atk);
               if(i>=0){ game.battlefield.splice(i,1); game.graveyard.push(p.atk); }
               log("  ✖ Dein Angreifer "+p.atk.name+" stirbt durch Erstschlag-Blocker "+p.blocker.name+".");
@@ -1798,7 +1798,7 @@ function nextPhase(){
           // Gegenschlag des Blockers: trifft JEDE lebende gepaarte Kreatur (auch reine Erstschläger, Regel 510.2: Blocker-Deckung gilt für alle)
           if(pair && game.battlefield.includes(a) && game.opp.battlefield.includes(pair.blocker)){
             const bDmg = +pair.blocker.pow||0;
-            if(bDmg >= (+a.tou||0)){
+            if(isLethal(bDmg, a, pair.blocker)){
               const i = game.battlefield.indexOf(a);
               if(i>=0){ game.battlefield.splice(i,1); game.graveyard.push(a); }
               log("✖ Dein Angreifer "+a.name+" stirbt durch "+pair.blocker.name+" ("+bDmg+" Schaden, Härte "+a.tou+").");
@@ -1808,7 +1808,7 @@ function nextPhase(){
           if(pair && game.battlefield.includes(a)){
             const d = +a.pow||0;
             if(game.opp.battlefield.includes(pair.blocker)){
-              if(d >= (+pair.blocker.tou||0)){
+              if(isLethal(d, pair.blocker, a)){
                 const i = game.opp.battlefield.indexOf(pair.blocker);
                 if(i>=0){ game.opp.battlefield.splice(i,1); game.opp.graveyard.push(pair.blocker); }
                 log("✖ "+pair.blocker.name+" stirbt ("+d+" Schaden).");
@@ -1980,8 +1980,9 @@ function permAction(idx){
       if((p.type_line||"").toLowerCase().includes("defender")){ toast(p.name+" hat Defender — kann nicht angreifen (Regel 702.3)."); return; }
       if(txt.includes("can't attack") || txt.includes("cannot attack")){ toast("Kartentext von "+p.name+" verbietet den Angriff."); return; }
       if(p.turnPlayed === game.turn && !txt.includes("haste")){ toast("Einsatzverzögerung: "+p.name+" wurde dieses Zug gespielt und hat kein Hast (Regel 302.6). Nächstes Zug angreifbar."); return; }
-      p.tapped = true; p.attacking = true;
-      log("Angreifer deklariert: "+p.name+(p.pow?" — Schaden bei unblockiertem Angriff: "+p.pow:""));
+      const vigil = (p.oracle||"").toLowerCase().includes("vigilance");
+      p.tapped = !vigil; p.attacking = true;  // Wachsamkeit: angreifen ohne Tappen (Regel 702.20)
+      log("Angreifer deklariert: "+p.name+(p.pow?" — Schaden bei unblockiertem Angriff: "+p.pow:"")+(vigil?" [Wachsamheit: bleibt ungetappt]":""));
       renderPlay();
     } else if(!isCreature && choice === "2"){
       toast("Opfern ist nur über Zauber oder Fähigkeiten möglich (Regel 701.2).");
@@ -2098,7 +2099,7 @@ function oppTurn(){
   if(held.length) log("⚙ 🤖 "+held.map(c=>c.name).join(", ")+(held.length>1?" können":" kann")+" dieses Zug nicht angreifen (Regel 302.6 / Kartentext).");
   if(atk.length){
     log("🤖 Gegner greift an mit "+atk.map(c=>c.name+" ("+c.pow+"/"+c.tou+")").join(", "));
-    atk.forEach(a => a.tapped = true);
+    atk.forEach(a => { const vigil = (a.oracle||"").toLowerCase().includes("vigilance"); a.tapped = !vigil; });  // Wachsamheit: kein Tappen (702.20)
     oppResolveCombat(atk);
   } else log("🤖 Gegner greift nicht an.");
   o.manaPool = [];
@@ -2162,6 +2163,12 @@ function trampleDamage(attacker, blocker){
   const pow = +attacker.pow || 0, blkTou = +blocker.tou || 0;
   return Math.max(0, pow - blkTou);
 }
+/* Tödlichkeit: Deathtouch — jede Menge Schaden > 0 ist tödlich (Regel 702.2), sonst Schaden >= Härte */
+function isLethal(dmg, target, source){
+  if(dmg <= 0) return false;
+  if(source && hasAbility(source, "deathtouch")) return true;
+  return dmg >= (+target.tou || 0);
+}
 
 function oppResolveCombat(attackers){
   // Blocker-Deklaration (vereinfacht): Jede deiner Kreaturen blockt genau EINEN Angreifer (Regel 509.1a).
@@ -2192,7 +2199,7 @@ function oppResolveCombat(attackers){
       const pair = pairings.find(p => p.atk === a);
       if(pair){
         const d = +a.pow||0;
-        if(d >= (+pair.blocker.tou||0)){
+        if(isLethal(d, pair.blocker, a)){
           const bi = game.battlefield.indexOf(pair.blocker);
           if(bi>=0){ game.battlefield.splice(bi,1); game.graveyard.push(pair.blocker); }
           log("  \u2716 Dein Blocker "+pair.blocker.name+" stirbt im Erstschlag-Schritt ("+d+" Schaden).");
@@ -2209,7 +2216,7 @@ function oppResolveCombat(attackers){
     for(const p of fsBlockers){
       if(!game.opp.battlefield.includes(p.atk)) continue;
       const d = +p.blocker.pow||0;
-      if(d >= (+p.atk.tou||0)){
+      if(isLethal(d, p.atk, p.blocker)){
         const ai = game.opp.battlefield.indexOf(p.atk);
         if(ai>=0){ game.opp.battlefield.splice(ai,1); game.opp.graveyard.push(p.atk); }
         log("  \u2714 Angreifer "+p.atk.name+" stirbt durch deinen Erstschlag-Blocker "+p.blocker.name+".");
@@ -2230,8 +2237,8 @@ function oppResolveCombat(attackers){
     if(pair && game.battlefield.includes(pair.blocker)){
       const atkDmg = +atk.pow||0, blkDmg = +pair.blocker.pow||0;
       log("\u2694 "+pair.blocker.name+" ("+blkDmg+"/"+pair.blocker.tou+") blockt "+atk.name+" ("+atkDmg+"/"+atk.tou+").");
-      let blockerDied = atkDmg >= (+pair.blocker.tou||0);
-      let attackerDied = blkDmg >= (+atk.tou||0);
+      let blockerDied = isLethal(atkDmg, pair.blocker, atk);
+      let attackerDied = isLethal(blkDmg, atk, pair.blocker);
       if(blockerDied){ game.battlefield = game.battlefield.filter(p => p !== pair.blocker); game.graveyard.push(pair.blocker); log("\u2716 Dein Blocker "+pair.blocker.name+" stirbt (Regel 704.5g vereinfacht)."); }
       if(attackerDied){ const oi = game.opp.battlefield.indexOf(atk); if(oi>=0){ game.opp.battlefield.splice(oi,1); game.opp.graveyard.push(atk); } log("\u2714 Angreifer "+atk.name+" stirbt."); }
       if(!blockerDied && !attackerDied) log("\u2014 Beide \u00fcberleben.");
