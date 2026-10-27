@@ -260,6 +260,27 @@ mark { background: #6b5a1e; color: #ffe9a8; border-radius: 2px; }
       <h2>Deck-Statistik</h2>
       <div id="deckStats"><span class="muted">Noch kein Deck gewählt.</span></div>
     </div>
+    <div class="panel">
+      <h2>Deck-Analyse</h2>
+      <p class="muted" style="font-size:12px">Automatische Hinweise zu Kurve, Ländern, Antworten und Deckarchetyp — prüft, bevor du Karten kaufst.</p>
+      <button class="primary" onclick="analyzeDeck()">🔍 Deck analysieren</button>
+      <div id="deckAnalysis" style="margin-top:10px"></div>
+    </div>
+    <div class="panel">
+      <h2>Preis-Schätzung (Cardmarket, EUR)</h2>
+      <p class="muted" style="font-size:12px">Preise pro Karte live von Scryfall (Cardmarkt-Daten). Summe = Einkaufsliste für dieses Deck.</p>
+      <button class="primary" onclick="priceDeck()">💰 Preis berechnen</button>
+      <div id="deckPrice" style="margin-top:10px"></div>
+    </div>
+    <div class="panel">
+      <h2>Deck teilen</h2>
+      <p class="muted" style="font-size:12px">Erzeugt einen Link, der dein Deck kodiert enthält — Freunde öffnen ihn und laden das Deck direkt in ihre App.</p>
+      <div class="row">
+        <button class="primary" onclick="shareDeck()">🔗 Share-Link erzeugen</button>
+        <button onclick="importDeckLink()">📥 Aus Link importieren</button>
+      </div>
+      <div id="deckShare" style="margin-top:10px"></div>
+    </div>
   </div>
 </section>
 
@@ -1573,6 +1594,131 @@ function runDrawSim(){
     + '<p style="color:'+color+';font-weight:600;margin-top:6px">'+esc(verdict)+'</p>';
 }
 
+/* ================= Deck-Analyse ================= */
+function analyzeDeck(){
+  const d = allDecks().find(x=>x.id===currentDeckId);
+  const box = $("deckAnalysis");
+  if(!d){ box.innerHTML = '<p class="muted">Kein Deck gewählt.</p>'; return; }
+  const pool = d.cards.flatMap(c => Array(c.qty).fill(c));
+  if(pool.length < 20){ box.innerHTML = '<p class="muted">Deck zu klein für eine Analyse (min. 20 Karten).</p>'; return; }
+  const lands = pool.filter(c=>(c.type_line||"").includes("Land"));
+  const nonLands = pool.filter(c=>!(c.type_line||"").includes("Land"));
+  const creatures = pool.filter(c=>(c.type_line||"").includes("Creature"));
+  const notes = [];
+  const good = [];
+  const warn = [];
+  // 1) Kurve
+  const highMv = nonLands.filter(c=>(c.cmc||0) >= 5).length;
+  const avgMv = nonLands.length ? (nonLands.reduce((s,c)=>s+(c.cmc||0),0)/nonLands.length).toFixed(1) : 0;
+  const landPct = Math.round(lands.length/pool.length*100);
+  if(highMv > nonLands.length*0.25 && landPct < 38) warn.push("Viele teure Karten (MV≥5: "+highMv+") bei nur "+landPct+"% Ländern — Manaloch-Risiko für die Spätphase. Entweder mehr Länder oder Kurve senken.");
+  if(avgMv < 2 && creatures.length > pool.length*0.3) good.push("Aggro-Kurve (Ø MV "+avgMv+") — schnelle Startphase.");
+  if(avgMv > 3.5) warn.push("Hohe Durchschnitts-Kurve (Ø MV "+avgMv+") — ohne Ramp (Länder/Elfen/Mana-Steine) wirst du langsam starten.");
+  // 2) Länder
+  if(landPct < 32) warn.push("Wenig Länder ("+landPct+"%). Faustregel Constructed: 22–26 (ca. 37–42%).");
+  else if(landPct >= 32 && landPct <= 44) good.push("Länderanteil solide ("+landPct+"%).");
+  else if(landPct > 46) warn.push("Sehr viele Länder ("+landPct+"%) — Landflut-Gefahr.");
+  // 3) Antworten (Removal/Counter)
+  const removal = pool.filter(c=>/destroy|exile target|deals? .* damage to target|counter target/i.test(c.oracle_text||c.oracle||"")).length;
+  if(removal === 0 && creatures.length < pool.length*0.5) warn.push("Kaum Antworten (Removal/Counter: 0 gefunden) — du kannst gegnerische Bedrohungen kaum entfernen.");
+  else if(removal >= 6) good.push(removal+" Antwort-Karten vorhanden — gut gegen Bedrohungen.");
+  // 4) Fliegende Anti-Antwort
+  const hasFlying = pool.some(c=>/flying/i.test(c.oracle_text||c.oracle||"") || /flying/i.test(c.type_line||""));
+  const canAnswerFlying = pool.some(c=>/reach|flying/i.test(c.oracle_text||c.oracle||"")) || removal >= 4;
+  if(hasFlying === false && !canAnswerFlying) warn.push("Nichts, was Fliegende blocken oder elegant loswerden kann (Reach/Removal) — gegen Flug-Decks schutzlos.");
+  // 5) Kreaturen-Anteil
+  if(creatures.length < 8 && (d.format||"constructed") === "constructed") warn.push("Nur "+creatures.length+" Kreaturen — wenig Druck, prüfe ob das zur Strategie passt (Control ok, Aggro nein).");
+  // 6) Strategie-Erkennung
+  const strategy = avgMv < 2.2 ? "Aggro" : avgMv < 3.2 ? "Midrange" : "Control/Spät";
+  const out =
+    (good.length ? '<p style="color:#7dbb6a">✔ '+good.map(esc).join('<br>✔ ')+'</p>' : '')
+    + (warn.length ? '<p style="color:#e0b06a">⚠ '+warn.map(esc).join('<br>⚠ ')+'</p>' : '')
+    + '<p class="muted" style="font-size:12px;margin-top:8px">Erkannte Ausrichtung: <b>'+esc(strategy)+'</b> · '+pool.length+' Karten · '+lands.length+' Länder · Ø MV '+avgMv+' · '+creatures.length+' Kreaturen · '+removal+' Antworten</p>'
+    + (good.length+warn.length === 0 ? '<p class="muted">Keine Auffälligkeiten — solides Deck-Profil.</p>' : '');
+  box.innerHTML = out;
+}
+
+/* ================= Preis-Schaetzung (Scryfall/Cardmarket) ================= */
+async function priceDeck(){
+  const d = allDecks().find(x=>x.id===currentDeckId);
+  const box = $("deckPrice");
+  if(!d){ box.innerHTML = '<p class="muted">Kein Deck gewählt.</p>'; return; }
+  const unique = d.cards.filter(c=>!c.sideboard);
+  if(!unique.length){ box.innerHTML = '<p class="muted">Deck ist leer.</p>'; return; }
+  box.innerHTML = '<p class="muted">Frage Scryfall nach Preisen… ('+unique.length+' Karten)</p>';
+  let total = 0, missing = [], rows = [];
+  for(const c of unique){
+    try{
+      const card = await jfetch("https://api.scryfall.com/cards/named?fuzzy=" + encodeURIComponent(c.name));
+      const eur = parseFloat(card.prices?.eur || "0");
+      const line = eur * c.qty;
+      total += line;
+      rows.push({ name: c.name, qty: c.qty, eur, line });
+      await new Promise(r=>setTimeout(r, 80));  // Ratelimit schonen
+    }catch(e){ missing.push(c.name); }
+  }
+  rows.sort((a,b)=>b.line-a.line);
+  let html = '<table><tr><th>Karte</th><th>Anz</th><th>€/Karte</th><th>Summe</th></tr>'
+    + rows.map(r=>'<tr><td>'+esc(r.name)+'</td><td>'+r.qty+'×</td><td>'+(r.eur ? r.eur.toFixed(2).replace(".",",")+"€" : "—")+'</td><td>'+(r.line ? r.line.toFixed(2).replace(".",",")+"€" : "—")+'</td></tr>').join("")
+    + '</table>'
+    + '<p style="margin-top:8px;font-weight:600">Gesamt: '+total.toFixed(2).replace(".",",")+' €</p>';
+  if(missing.length) html += '<p class="muted" style="font-size:12px">Nicht gefunden: '+esc(missing.join(", "))+'</p>';
+  html += '<p class="muted" style="font-size:11px">Preise: Scryfall/Cardmarket-Schnittstelle, tagesaktuell bei Abfrage. Foil-Preise separat möglich.</p>';
+  box.innerHTML = html;
+}
+
+/* ================= Deck teilen (Link) ================= */
+function shareDeck(){
+  const d = allDecks().find(x=>x.id===currentDeckId);
+  const box = $("deckShare");
+  if(!d){ box.innerHTML = '<p class="muted">Kein Deck gewählt.</p>'; return; }
+  // Komprimieren: "Name x Qty" pro Zeile + Name
+  const list = d.cards.map(c=>c.qty+" "+c.name).join("\n");
+  const payload = "DECK:"+d.name+"\n"+list;
+  try{
+    // LZ-String-artige Basis-Komprimierung: base64 (URL-safe)
+    const b64 = btoa(unescape(encodeURIComponent(payload))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+    const url = location.origin + location.pathname + "?deck=" + b64;
+    if(url.length > 8000){ box.innerHTML = '<p class="muted">Deck zu groß für einen Link — nutze stattdessen Export (JSON) und sende die Datei.</p>'; return; }
+    box.innerHTML = '<textarea id="shareUrl" readonly style="width:100%;height:80px;font-size:11px">'+esc(url)+'</textarea>'
+      + '<div class="row" style="margin-top:6px"><button class="primary" onclick="copyShareLink()">In Zwischenablage kopieren</button></div>';
+  }catch(e){ box.innerHTML = '<p class="muted">Fehler: '+esc(e.message)+'</p>'; }
+}
+function copyShareLink(){
+  const ta = $("shareUrl"); ta.select();
+  try{ navigator.clipboard.writeText(ta.value).then(()=>toast("Link kopiert!"), ()=>{ document.execCommand("copy"); toast("Link kopiert!"); }); }
+  catch(e){ document.execCommand("copy"); toast("Link kopiert!"); }
+}
+function importDeckLink(){
+  let url = prompt("Share-Link einfügen:");
+  if(!url) return;
+  const m = url.match(/[?&]deck=([A-Za-z0-9_\-]+)/);
+  if(!m){ toast("Kein gültiger Deck-Link (Parameter deck= fehlt)."); return; }
+  try{
+    let b64 = m[1].replace(/-/g,"+").replace(/_/g,"/");
+    while(b64.length % 4) b64 += "=";
+    const payload = decodeURIComponent(escape(atob(b64)));
+    const lines = payload.split("\n");
+    const name = (lines[0].startsWith("DECK:") ? lines[0].slice(5) : "Importiertes Deck");
+    const cards = [];
+    for(const line of lines.slice(1)){
+      const mm = line.match(/^(\d+)\s+(.+)$/);
+      if(mm){
+        // Karte in cardDB suchen (fuer vollstaendige Daten), sonst Minimal-Eintrag
+        const db = cardDB.find(c => c.name.toLowerCase() === mm[2].toLowerCase());
+        cards.push(db ? { ...db, qty: +mm[1] } : { name: mm[2], qty: +mm[1], type_line:"", cmc:0, mana_cost:"" });
+      }
+    }
+    if(!cards.length){ toast("Link enthält keine Karten."); return; }
+    const decks = allDecks();
+    decks.push({ id: "imp"+Date.now(), name: name+" (importiert)", format: "constructed", cards });
+    saveDecks(decks);
+    currentDeckId = decks[decks.length-1].id;
+    loadDeckToUI();
+    toast("Deck „"+name+"“ importiert ("+cards.reduce((s,c)=>s+c.qty,0)+" Karten)!");
+  }catch(e){ toast("Import fehlgeschlagen: "+e.message); }
+}
+
 function validateDeck(){
   const d = allDecks().find(x=>x.id===currentDeckId); if(!d){ $("deckErrors").textContent=""; return; }
   const errs = [];
@@ -2377,6 +2523,38 @@ function updateStatus(){
 (async function init(){
   refreshDeckSelect(); loadDeckToUI();
   restoreDecksBackup();
+  // Share-Link in URL? -> Deck automatisch importieren
+  if(location.search.includes("deck=")){
+    setTimeout(() => {
+      try{
+        const m = location.href.match(/[?&]deck=([A-Za-z0-9_\-]+)/);
+        if(m){
+          let b64 = m[1].replace(/-/g,"+").replace(/_/g,"/");
+          while(b64.length % 4) b64 += "=";
+          const payload = decodeURIComponent(escape(atob(b64)));
+          const lines = payload.split("\n");
+          const name = lines[0].startsWith("DECK:") ? lines[0].slice(5) : "Importiertes Deck";
+          const cards = [];
+          for(const line of lines.slice(1)){
+            const mm = line.match(/^(\d+)\s+(.+)$/);
+            if(mm){
+              const db = cardDB.find(c => c.name.toLowerCase() === mm[2].toLowerCase());
+              cards.push(db ? { ...db, qty: +mm[1] } : { name: mm[2], qty: +mm[1], type_line:"", cmc:0, mana_cost:"" });
+            }
+          }
+          if(cards.length){
+            const decks = allDecks();
+            decks.push({ id: "imp"+Date.now(), name: name+" (aus Link)", format: "constructed", cards });
+            saveDecks(decks);
+            currentDeckId = decks[decks.length-1].id;
+            loadDeckToUI();
+            switchTab("deck");
+            toast("Deck \u201e"+name+"\u201c aus Link geladen!");
+          }
+        }
+      }catch(e){ /* ungültiger Link -> ignorieren */ }
+    }, 500);
+  }
   // load rules from cache or net
   await loadRules(false);
   // load card db from IndexedDB
