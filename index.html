@@ -140,6 +140,10 @@ mark { background: #6b5a1e; color: #ffe9a8; border-radius: 2px; }
 .actionMenuButtons button.primary { background:var(--accent); color:#fff; font-weight:600; }
 .actionMenuButtons button:disabled { opacity:0.45; cursor:not-allowed; }
 .actionMenuCancel { margin-top:10px; width:100%; padding:8px; border-radius:6px; background:transparent; border:1px solid var(--border); color:var(--muted); cursor:pointer; }
+.actionMenuBox { position: relative; }
+.actionMenuX { position:absolute; top:8px; right:8px; width:32px; height:32px; border-radius:50%; border:none; background:var(--bg3); color:var(--fg); font-size:15px; cursor:pointer; }
+.actionMenuX:active { background:var(--border); }
+.actionMenuCancel { padding:12px !important; font-weight:600; }
 .perm.selectable { outline:2px solid #6bb3ff; cursor:pointer; }
 .perm.selectedBlocker { outline:3px solid #6bd66b; background:#2a3a2a; }
 </style>
@@ -422,11 +426,12 @@ mark { background: #6b5a1e; color: #ffe9a8; border-radius: 2px; }
 </main>
 
 <div id="modal"><div id="modalBox"><button id="modalClose" onclick="closeModal()">&times;</button><div id="modalContent"></div></div></div>
-<div class="actionMenu" id="actionMenu"><div class="actionMenuBox">
+<div class="actionMenu" id="actionMenu" onclick="closeActionMenu()"><div class="actionMenuBox" onclick="event.stopPropagation()">
     <div class="actionMenuTitle" id="actionMenuTitle"></div>
+    <button class="actionMenuX" onclick="closeActionMenu()" aria-label="Schließen">✕</button>
     <div class="actionMenuInfo" id="actionMenuInfo"></div>
     <div class="actionMenuButtons" id="actionMenuButtons"></div>
-    <button class="actionMenuCancel" onclick="closeActionMenu()">Abbrechen</button>
+    <button class="actionMenuCancel" onclick="closeActionMenu()">Schließen</button>
   </div></div>
 <div class="toast" id="toast"></div>
 <script>
@@ -2085,7 +2090,7 @@ function nextPhase(){
         dmg += totalDmg;
         game.opp.life -= dmg;
         log("⚔ Deine Angreifer fügen dem Gegner insgesamt "+dmg+" Schaden zu — Gegner-Leben: "+game.opp.life+" (Regel 510.2).");
-        myAtk.forEach(a => { if(game.battlefield.includes(a)) applyLifelink(a, (+a.pow||0), false); });
+        myAtk.forEach(a => { if(game.battlefield.includes(a)){ applyLifelink(a, (+a.pow||0), false); applyEnergyTriggers(a, "combatDamage", false); } });
         checkGameEnd();
       } else {
         const dmg = myAtk.reduce((s,a)=>s+(+a.pow||0),0) * (myAtk.some(a=>hasAbility(a,"double strike")) ? 1 : 1);
@@ -2203,6 +2208,7 @@ function castSpell(idx){
     game.battlefield.push({ ...c, kind: "perm", tapped: false, turnPlayed: game.turn, counters: c.loyalty ? +c.loyalty : 0, dmg: 0 });
     log("Ausgespielt: "+c.name+" ("+(c.pow||"?")+"/"+(c.tou||"?")+")");
     applyEtbEffects(game.battlefield[game.battlefield.length-1], false);
+    applyEnergyTriggers(game.battlefield[game.battlefield.length-1], "etb", false);
   } else {
     game.graveyard.push(c);
     log("Zauber: "+c.name+" →_stack→ Friedhof (Effekt manuell ausführen — Goldfisch-Modus)");
@@ -2255,7 +2261,7 @@ async function permAction(idx){
   if(isCreature && pick === 1){
     // Angriff
     const txt = (p.oracle||"").toLowerCase();
-    if((p.type_line||"").toLowerCase().includes("defender")){ toast(p.name+" hat Defender \u2014 kann nicht angreifen (702.3)."); return; }
+    if(hasDefender(p)){ toast(p.name+" hat Defender \u2014 kann nicht angreifen (Regel 702.3)."); return; }
     if(txt.includes("can't attack") || txt.includes("cannot attack")){ toast("Kartentext von "+p.name+" verbietet den Angriff."); return; }
     if(p.turnPlayed === game.turn && !txt.includes("haste")){ toast("Einsatzverz\u00f6gerung: "+p.name+" (Regel 302.6). N\u00e4chstes Zug angreifbar."); return; }
     const vigil = txt.includes("vigilance");
@@ -2329,6 +2335,7 @@ function oppPayAndCast(idx){
     o.battlefield.push({ ...c, kind:"perm", tapped:false, turnPlayed: game.turn+1, counters: c.loyalty ? +c.loyalty : 0 });
     log("🤖 Gegner: "+c.name+(c.pow?" ("+c.pow+"/"+c.tou+")":"")+" ausgespielt.");
     applyEtbEffects(o.battlefield[o.battlefield.length-1], true);
+    applyEnergyTriggers(o.battlefield[o.battlefield.length-1], "etb", true);
   } else {
     o.graveyard.push(c);
     log("🤖 Gegner: Zauber "+c.name+" (Effekt vereinfacht).");
@@ -2399,7 +2406,7 @@ async function oppTurn(){
   const canAtk = p => {
     if(p.kind !== "perm" || p.tapped) return false;
     if(!(p.type_line||"").includes("Creature")) return false;
-    if((p.type_line||"").toLowerCase().includes("defender")) return false;
+    if(hasDefender(p)) return false;
     const txt = (p.oracle||"").toLowerCase();
     if(txt.includes("can't attack") || txt.includes("cannot attack")) return false;
     if(!p.turnPlayed || p.turnPlayed < game.turn + 1) return true;
@@ -2537,6 +2544,72 @@ function trampleDamage(attacker, blocker){
   return Math.max(0, pow - blkTou);
 }
 /* Tödlichkeit: Deathtouch — jede Menge Schaden > 0 ist tödlich (Regel 702.2), sonst Schaden >= Härte */
+/* Defender (Regel 702.3): Kreatur kann nicht angreifen.
+   Gilt bei "Defender" im Typ, im Oracle-Text oder bei Wall-Kreaturen ohne eigene Faehigkeit (Errata). */
+/* "Pay {E}{E}: Effekt"-Fähigkeiten parsen (vereinfacht) */
+function parseEnergyAbilities(oracleText){
+  const out = [];
+  if(!oracleText) return out;
+  const wordNums = { one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10 };
+  const re = /(?:pay ([a-z]+) )?\{E\}(?:\{E\})*:\s*([^.]*)/gi;
+  let m;
+  while((m = re.exec(oracleText)) !== null){
+    let cost = (m[0].match(/\{E\}/g)||[]).length;
+    if(m[1] && wordNums[m[1].toLowerCase()] !== undefined && wordNums[m[1].toLowerCase()] > 0) cost = wordNums[m[1].toLowerCase()];
+    const label = (m[2]||"").trim().slice(0, 70);
+    if(label.length > 3 && cost > 0) out.push({ cost, label, full: m[2] });
+    if(out.length >= 3) break;
+  }
+  return out;
+}
+/* Energie-Fähigkeit ausführen (vereinfachte Effekte) */
+function applyEnergyEffect(p, ab, isOpponent){
+  const txt = (ab.full||"").toLowerCase();
+  const counterM = txt.match(/put (?:a|one|two) \+1\/\+1 counter/);
+  if(counterM){
+    const n = /two/.test(counterM[0]) ? 2 : 1;
+    p.counters = (p.counters||0) + n;
+    p.pow = String((+p.pow||0) + n); p.tou = String((+p.tou||0) + n);
+    log("⚡ → "+p.name+" erhält "+n+" +1/+1-Marke(n) — jetzt "+p.pow+"/"+p.tou+".");
+    return;
+  }
+  const dmgM = txt.match(/deals? (\d+) damage/);
+  if(dmgM){
+    const d = +dmgM[1];
+    if(isOpponent){ game.life -= d; log("⚡ 🤖 → "+d+" Schaden an dir — Leben "+game.life+"."); }
+    else if(game.opp){ game.opp.life -= d; log("⚡ → "+d+" Schaden am Gegner — dessen Leben "+game.opp.life+"."); }
+    checkGameEnd();
+    return;
+  }
+  if(/draw (?:a|one|two|three) cards?/.test(txt)){
+    const n = /three/.test(txt) ? 3 : /two/.test(txt) ? 2 : 1;
+    const lib = isOpponent ? game.opp.library : game.library;
+    const hand = isOpponent ? game.opp.hand : game.hand;
+    for(let i=0;i<n;i++){ const c = lib.pop(); if(c) hand.push(c); }
+    log("⚡ → "+n+" Karte(n) gezogen.");
+    return;
+  }
+  const lifeM = txt.match(/you gain (\d+) life/);
+  if(lifeM){
+    const g = +lifeM[1];
+    if(isOpponent) game.opp.life += g; else game.life += g;
+    log("⚡ → +"+g+" Leben.");
+    return;
+  }
+  log("⚡ ⚙ Effekt vereinfacht nicht ausgeführt: "+ab.label);
+}
+
+function hasDefender(p){
+  const t = (p.type_line||"").toLowerCase();
+  const o = (p.oracle||"").toLowerCase();
+  // Ausnahme zuerst: Text hebt Defender ausdruecklich auf
+  if(/attack as though|can attack|doesn.?t have defender|does not have defender|loses defender/.test(o)) return false;
+  if(t.includes("defender") || o.includes("defender")) return true;
+  // Wall-Kreaturen haben per Errata Defender (Regel 702.3a)
+  if(/\bwall\b/.test(t)) return true;
+  return false;
+}
+
 function isLethal(dmg, target, source){
   if(dmg <= 0) return false;
   if(source && hasAbility(source, "deathtouch")) return true;
@@ -2635,6 +2708,52 @@ async function oppResolveCombat(attackers){
   checkGameEnd();
 }
 
+/* ===== Energie-Zaehler (Regel 106.1b / Kaladesh-Mechanik) ===== */
+function countEnergySymbols(text){
+  // zaehlt {E}-Symbole in einem Textstueck
+  const m = (text||"").match(/\{E\}/g);
+  return m ? m.length : 0;
+}
+function gainEnergy(n, isOpponent){
+  if(n <= 0) return;
+  if(isOpponent){ game.opp.energy = (game.opp.energy||0) + n; log("\U0001F916 \u26A1 Gegner erhält "+n+" Energie (gesamt "+game.opp.energy+")."); }
+  else { game.energy = (game.energy||0) + n; log("\u26A1 Du erhältst "+n+" Energie (gesamt "+game.energy+")."); }
+  renderPlay();
+}
+function payEnergy(n, isOpponent){
+  const pool = isOpponent ? (game.opp.energy||0) : (game.energy||0);
+  if(pool < n) return false;
+  if(isOpponent) game.opp.energy -= n; else game.energy -= n;
+  return true;
+}
+/* Auto-Trigger: Energie aus Kartentexten (vereinfacht) */
+function applyEnergyTriggers(perm, event, isOpponent){
+  // event: "etb" | "combatDamage" | "permanentDies"
+  const txt = (perm.oracle||"");
+  const lower = txt.toLowerCase();
+  if(!lower.includes("{e}")) return;  // keine Energie-Karte
+  // 1) "Whenever this creature deals combat damage to a player, you get {E}"
+  if(event === "combatDamage" && /deals combat damage to a player/.test(lower)){
+    const n = countEnergySymbols(txt.match(/deals combat damage to a player[^.]*?you get ([^.]*)/)?.[1] || "");
+    if(n > 0) gainEnergy(n, isOpponent);
+  }
+  // 2) ETB: "When ... enters ..., you get {E}"
+  if(event === "etb" && /(enters|enters the battlefield)[^.]*?you get/.test(lower)){
+    const n = countEnergySymbols(txt.match(/(?:enters[^.]*?)you get ([^.]*)/)?.[1] || "");
+    if(n > 0) gainEnergy(n, isOpponent);
+  }
+  // 3) "Whenever a permanent you control is put into a graveyard" (z.B. Aetherworks Marvel)
+  if(event === "permanentDies" && /permanent you control is put into a graveyard[^.]*?you get/.test(lower)){
+    const n = countEnergySymbols(txt.match(/graveyard[^.]*?you get ([^.]*)/)?.[1] || "");
+    if(n > 0) gainEnergy(n, isOpponent);
+  }
+  // 4) Spells: "You get {E}" als Haupffekt (z.B. Attune with Aether)
+  if(event === "cast" && /^you get \{E\}|, you get \{E\}/.test(lower)){
+    const n = countEnergySymbols(txt.match(/you get ([^.]*)/)?.[1] || "");
+    if(n > 0) gainEnergy(n, isOpponent);
+  }
+}
+
 function checkGameEnd(){
   if(game.opp && game.opp.life <= 0){ log("\Uud83C\uDFA6 SIEG! Das Gegner-Leben ist auf 0."); toast("\u2705 Du gewinnst!"); game = null; renderPlay(); }
   else if(game && game.life <= 0){ log("\u2620 NIEDERLAGE: Dein Leben ist auf 0 (Regel 104.3b)."); toast("\u274C Du verlierst!"); game = null; renderPlay(); }
@@ -2651,6 +2770,7 @@ function renderPlay(){
   $("stLands").textContent = game.battlefield.filter(p=>p.kind==="land").length;
   $("stPhase").textContent = phaseName();
   $("stOppLife").textContent = game.opp ? game.opp.life : "—";
+  if(game.energy) $("stPhase").textContent = $("stPhase").textContent + " · ⚡"+game.energy;
   $("oppHand").textContent = game.opp ? game.opp.hand.length + " Karten (verdeckt)" : "";
   $("oppBattlefield").innerHTML = game.opp ? game.opp.battlefield.map(p => permCardHtml(p, null, true)).join("") : "";
   $("oppGraveyard").textContent = game.opp ? game.opp.graveyard.map(c=>c.name).join(", ") : "";
@@ -2700,6 +2820,13 @@ async function permZoomOrMenu(idx, el){
         sub: "Loyalität "+p.counters+" → "+(p.counters+ab.cost) });
     });
   }
+  if((p.oracle||"").includes("{E}")){
+    parseEnergyAbilities(p.oracle).forEach(ab => {
+      const afford = (game.energy||0) >= ab.cost;
+      buttons.push({ label: "⚡ "+ab.label, disabled: !afford,
+        sub: afford ? "Kosten: "+ab.cost+" Energie (du hast "+(game.energy||0)+")" : "Nicht genug Energie ("+ab.cost+" benötigt, "+(game.energy||0)+" vorhanden)" });
+    });
+  }
   const imgTag = img ? '<img src="'+img+'" style="width:100%;max-width:260px;border-radius:8px;display:block;margin:0 auto 8px">' : "";
   const pick = await showActionMenu(p.name, (p.oracle||"").slice(0,180), buttons, imgTag);
   if(pick === null) return;
@@ -2713,7 +2840,7 @@ async function permZoomOrMenu(idx, el){
     if(pick === 0){ p.tapped = !p.tapped; log(p.name+" "+(p.tapped?"getappt":"enttappt")); renderPlay(); return; }
     if(isCreature && pick === 1){
       const txt = (p.oracle||"").toLowerCase();
-      if((p.type_line||"").toLowerCase().includes("defender")){ toast(p.name+" hat Defender (702.3)."); return; }
+      if(hasDefender(p)){ toast(p.name+" hat Defender \u2014 kann nicht angreifen (Regel 702.3)."); return; }
       if(p.turnPlayed === game.turn && !txt.includes("haste")){ toast("Einsatzverzögerung (302.6). Nächstes Zug."); return; }
       const vigil = txt.includes("vigilance");
       p.tapped = !vigil; p.attacking = true;
@@ -2734,6 +2861,19 @@ async function permZoomOrMenu(idx, el){
       }
     }
   }
+    if((p.oracle||"").includes("{E}")){
+      const energyAbilities = parseEnergyAbilities(p.oracle);
+      const eBase = (isCreature ? 2 : 1) + (isPW ? parsePwAbilities(p.oracle).length : 0);
+      const eChoice = pick - eBase;
+      if(eChoice >= 0 && eChoice < energyAbilities.length){
+        const ab = energyAbilities[eChoice];
+        if(payEnergy(ab.cost, false)){
+          log("⚡ "+p.name+" zahlt "+ab.cost+" Energie → "+ab.label+".");
+          applyEnergyEffect(p, ab, false);
+          renderPlay(); return;
+        } else { toast("Nicht genug Energie."); return; }
+      }
+    }
 }
 function zoomCardFromData(el){
   const name = el.getAttribute("data-name") || "";
@@ -2816,3 +2956,4 @@ function updateStatus(){
 </script>
 </body>
 </html>
+    applyEnergyTriggers(c, "cast", false);
