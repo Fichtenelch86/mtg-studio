@@ -2088,8 +2088,11 @@ function nextPhase(){
           }
         }
         dmg += totalDmg;
+        const unblockedAtk = myAtk.filter(a => !pairings.some(p => p.atk === a) && game.battlefield.includes(a));
+        const poisonOut = poisonFromAttackers(unblockedAtk);
         game.opp.life -= dmg;
         log("⚔ Deine Angreifer fügen dem Gegner insgesamt "+dmg+" Schaden zu — Gegner-Leben: "+game.opp.life+" (Regel 510.2).");
+        if(poisonOut > 0) addPoison(poisonOut, false);
         myAtk.forEach(a => { if(game.battlefield.includes(a)){ applyLifelink(a, (+a.pow||0), false); applyEnergyTriggers(a, "combatDamage", false); } });
         checkStateBasedDeaths();
         checkGameEnd();
@@ -2426,14 +2429,58 @@ async function oppTurn(){
   renderPlay();
 }
 /* ================= Vereinfachte Trigger-Engine (ETB + Lifelink) ================= */
+/* Trigger-Verdoppler (Harmonic Prodigy / Panharmonicon-Mechanik): jede einschlaegige
+   bleibende Karte erhoeht die Ausloesungen ausgeloster Faehigkeiten um 1 (additiv, Regel 614) */
+function triggerMultiplier(){
+  return 1 + game.battlefield.filter(p => p.kind === "perm" &&
+    /triggers an additional time|triggers twice/i.test(p.oracle||"")).length;
+}
+/* Poison-Zaehler (Regel 702.90b Toxic / 702.90 Infect, 10 Zaehler = Niederlage, Regel 704.5) */
+function addPoison(n, mine){
+  if(!n) return;
+  if(mine){ game.poison = (game.poison||0) + n; log("\u2620 Du erhaeltst "+n+" Giftzaehler — jetzt "+game.poison+"/10."); if(game.poison >= 10){ log("\u2620 NIEDERLAGE: 10 Giftzaehler (Regel 704.5)."); toast("\u274C Du verlierst an Gift!"); game = null; renderPlay(); } }
+  else if(game.opp){ game.opp.poison = (game.opp.poison||0) + n; log("\u2620 Gegner erhaelt "+n+" Giftzaehler — jetzt "+game.opp.poison+"/10."); if(game.opp.poison >= 10){ log("\U0001F3AE SIEG: Gegner hat 10 Giftzaehler (Regel 704.5)."); toast("\u2705 Du gewinnst an Gift!"); game = null; renderPlay(); } }
+}
+/* Kampfschaden an Spieler: Infect/Toxic-Zaehler fuer unblockierte Angreifer */
+function poisonFromAttackers(attackers){
+  let n = 0;
+  for(const a of attackers){
+    const o = (a.oracle||"").toLowerCase();
+    if(o.includes("infect")) n += (+a.pow||0);
+    else { const t = o.match(/toxic (\d+)/); if(t) n += +t[1]; }
+  }
+  return n;
+}
+/* Stirbt-Trigger (Blood-Artist-Mechanik, Regel 603.6c): beim Tod einer Kreatur feuern
+   Faehigkeiten vom Typ "Immer wenn eine Kreatur stirbt" der ueberlebenden Karten */
+function onDeathTriggers(dead, mine){
+  const side = mine ? game.battlefield : (game.opp ? game.opp.battlefield : []);
+  for(const p of side){
+    if(p === dead || p.kind !== "perm") continue;
+    const o = (p.oracle||"").toLowerCase();
+    if(!/whenever .*dies|whenever .*creature.*dies/.test(o)) continue;
+    if(/each opponent loses|target opponent loses|opponents? lose/.test(o)){
+      if(mine && game.opp){ game.opp.life -= 1; log("\u2620 "+p.name+" (Stirbt-Trigger): Gegner verliert 1 Leben — "+game.opp.life+"."); }
+      else if(!mine){ game.life -= 1; log("\u2620 "+p.name+" (Stirbt-Trigger): Du verlierst 1 Leben — "+game.life+"."); }
+    }
+    if(/you gain (\d+) life/.test(o)){
+      const g = +((o.match(/you gain (\d+) life/)||[])[1]||1);
+      if(mine){ game.life += g; log("\u2764 "+p.name+" (Stirbt-Trigger): Du erhaeltst "+g+" Leben — "+game.life+"."); }
+      else if(game.opp){ game.opp.life += g; log("\u2764 "+p.name+" (Stirbt-Trigger): Gegner erhaelt "+g+" Leben — "+game.opp.life+"."); }
+    }
+  }
+  checkGameEnd();
+}
 function applyEtbEffects(perm, isOpponent){
   const txt = (perm.oracle||"").toLowerCase();
   const who = isOpponent ? "\U0001F916 Gegner" : "Du";
+  const mult = triggerMultiplier();
+  if(mult > 1) log("\u{1F501} Trigger-Verdoppler aktiv: F\u00e4higkeiten l\u00f6sen "+mult+"x aus (Regel 614, additiv).");
   let did = false;
   // ETB: Karten ziehen
   const drawM = txt.match(/when [^.]*?enters?[^.]*?, (?:you may )?draw (?:a|one|two|three) cards?/);
   if(drawM){
-    const n = /three/.test(drawM[0]) ? 3 : /two/.test(drawM[0]) ? 2 : 1;
+    const n = (/three/.test(drawM[0]) ? 3 : /two/.test(drawM[0]) ? 2 : 1) * mult;
     for(let i=0;i<n;i++){
       const lib = isOpponent ? game.opp.library : game.library;
       const hand = isOpponent ? game.opp.hand : game.hand;
@@ -2445,7 +2492,7 @@ function applyEtbEffects(perm, isOpponent){
   // ETB: direkter Schaden
   const dmgM = txt.match(/deals? (\d+) damage (?:to|to any target|to target (?:creature|player|opponent|any target))/);
   if(dmgM && /enters?|when/.test(txt)){
-    const d = +dmgM[1];
+    const d = +dmgM[1] * mult;
     if(isOpponent){ game.life -= d; log("\U0001F916 \u2699 "+perm.name+" (ETB): "+d+" Schaden an dir \u2014 Leben "+game.life+"."); checkGameEnd(); }
     else if(game.opp){ game.opp.life -= d; log("\u2699 "+perm.name+" (ETB): "+d+" Schaden am Gegner \u2014 dessen Leben "+game.opp.life+"."); checkGameEnd(); }
     did = true;
@@ -2453,7 +2500,7 @@ function applyEtbEffects(perm, isOpponent){
   // ETB: Leben gewinnen
   const lifeM = txt.match(/you gain (\d+) life/);
   if(lifeM && /enters?|when/.test(txt)){
-    const g = +lifeM[1];
+    const g = +lifeM[1] * mult;
     if(isOpponent){ game.opp.life += g; log("\U0001F916 \u2699 "+perm.name+" (ETB): Gegner +"+g+" Leben ("+game.opp.life+")."); }
     else { game.life += g; log("\u2699 "+perm.name+" (ETB): Du +"+g+" Leben ("+game.life+")."); }
     did = true;
@@ -2640,6 +2687,7 @@ async function killCreature(perm, mine){
   const gy = mine ? game.graveyard : game.opp.graveyard;
   gy.push(perm);
   if(perm.kind !== "perm") return;
+  if((perm.type_line||"").includes("Creature")) onDeathTriggers(perm, mine);
   if(mine && /\bmodular\b/i.test(perm.oracle||"") && (perm.counters||0) > 0){
     const n = perm.counters;
     const targets = game.battlefield.filter(x => x !== perm && x.kind === "perm" && (x.type_line||"").includes("Artifact") && (x.type_line||"").includes("Creature"));
@@ -2775,9 +2823,12 @@ async function oppResolveCombat(attackers){
       }
     }
     if(fsDmg > 0){
+      const oppFs = fsAttackers.filter(a => !pairings.some(p => p.atk === a));
+      const pin = poisonFromAttackers(oppFs);
       game.life -= fsDmg;
       totalDmg += fsDmg;
       log("  Erstschlag-Schaden: "+fsDmg+" \u2014 dein Leben: "+game.life+".");
+      if(pin > 0) addPoison(pin, true);
     }
     log("(Priorität zwischen den Schritten vereinfacht \u00fcbersprungen, Regel 510.3.)");
   }
@@ -2803,8 +2854,11 @@ async function oppResolveCombat(attackers){
     }
   }
   if(totalDmg > 0){
+    const oppUnblocked = attackers.filter(a => !pairings.some(p => p.atk === a) && game.opp.battlefield.includes(a));
+    const pin2 = poisonFromAttackers(oppUnblocked);
     game.life -= totalDmg;
     log("\U0001F916 Kampfschaden gesamt: "+totalDmg+" \u2014 dein Leben: "+game.life+" (Regel 510.2).");
+    if(pin2 > 0) addPoison(pin2, true);
   }
   checkStateBasedDeaths();  // Wither-Opfer mit tou<=0 sterben (704.5f)
   checkGameEnd();
