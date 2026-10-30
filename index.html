@@ -2029,12 +2029,12 @@ function nextPhase(){
               const d = +a.pow||0;
               if(isLethal(d, pair.blocker, a)){
                 const i = game.opp.battlefield.indexOf(pair.blocker);
-                if(i>=0){ game.opp.battlefield.splice(i,1); game.opp.graveyard.push(pair.blocker); }
+                if(i>=0){ game.opp.battlefield.splice(i,1); killCreature(pair.blocker, false); }
                 log("  ✖ "+pair.blocker.name+" stirbt im Erstschlag-Schritt ("+d+" Schaden, Härte "+pair.blocker.tou+").");
                 pairings.splice(pairings.indexOf(pair), 1);
                 const tr = trampleDamage(a, pair.blocker);
                 if(tr > 0){ fsDmg += tr; log("  → Trampeln: "+tr+" Schaden an den Gegner."); }
-              } else log("  "+a.name+" macht "+d+" Schaden auf "+pair.blocker.name+" (überlebt).");
+              } else { if(dealsWitherDamage(a)) addM1M1(pair.blocker, d); log("  "+a.name+" macht "+d+" Schaden auf "+pair.blocker.name+" (überlebt)"+(dealsWitherDamage(a)?" — als -1/-1-Marke(n)":"")+"."); }
             } else {
               fsDmg += +a.pow||0;
               log("  "+a.name+" (unblockiert) macht "+(+a.pow||0)+" Schaden.");
@@ -2046,7 +2046,7 @@ function nextPhase(){
             const d = +p.blocker.pow||0;
             if(isLethal(d, p.atk, p.blocker)){
               const i = game.battlefield.indexOf(p.atk);
-              if(i>=0){ game.battlefield.splice(i,1); game.graveyard.push(p.atk); }
+              if(i>=0){ game.battlefield.splice(i,1); killCreature(p.atk, true); }
               log("  ✖ Dein Angreifer "+p.atk.name+" stirbt durch Erstschlag-Blocker "+p.blocker.name+".");
             }
           }
@@ -2064,7 +2064,7 @@ function nextPhase(){
             const bDmg = +pair.blocker.pow||0;
             if(isLethal(bDmg, a, pair.blocker)){
               const i = game.battlefield.indexOf(a);
-              if(i>=0){ game.battlefield.splice(i,1); game.graveyard.push(a); }
+              if(i>=0){ game.battlefield.splice(i,1); killCreature(a, true); }
               log("✖ Dein Angreifer "+a.name+" stirbt durch "+pair.blocker.name+" ("+bDmg+" Schaden, Härte "+a.tou+").");
             }
           }
@@ -2074,11 +2074,11 @@ function nextPhase(){
             if(game.opp.battlefield.includes(pair.blocker)){
               if(isLethal(d, pair.blocker, a)){
                 const i = game.opp.battlefield.indexOf(pair.blocker);
-                if(i>=0){ game.opp.battlefield.splice(i,1); game.opp.graveyard.push(pair.blocker); }
+                if(i>=0){ game.opp.battlefield.splice(i,1); killCreature(pair.blocker, false); }
                 log("✖ "+pair.blocker.name+" stirbt ("+d+" Schaden).");
                 const tr = trampleDamage(a, pair.blocker);
                 if(tr > 0){ dmg += tr; log("→ Trampeln: "+tr+" Schaden an den Gegner."); }
-              } else log(a.name+" macht "+d+" Schaden auf "+pair.blocker.name+" (überlebt).");
+              } else { if(dealsWitherDamage(a)) addM1M1(pair.blocker, d); log(a.name+" macht "+d+" Schaden auf "+pair.blocker.name+" (überlebt)"+(dealsWitherDamage(a)?" — als -1/-1-Marke(n)":"")+"."); }
             }
           } else if(game.battlefield.includes(a)){
             // Unblockiert: ohne Erstschlag (oder mit Doppelschlag 2. Teil)
@@ -2133,8 +2133,8 @@ async function handAction(idx){
   if(pick === null) return;
   const act = buttons[pick];
   if(act.label.startsWith("\u274E\uFE0F Land")){ playLand(idx); toast("Land gespielt: "+c.name); }
-  else if(act.label.startsWith("\u2728 Zauber")){ castSpell(idx); }
-  else if(act.label.startsWith("\u{1F5D1}")){ game.hand.splice(idx,1); game.graveyard.push(c); log("Karte abgelegt: "+c.name); renderPlay(); }
+  else if(act.label.startsWith("\u2728 Zauber")){ castSpell(idx).catch(()=>{}); }
+  else if(act.label.startsWith("\u{1F5D1}")){ game.hand.splice(idx,1); killCreature(c, true); log("Karte abgelegt: "+c.name); renderPlay(); }
 }
 /* ===== Mana-Kosten-Utilities ===== */
 function parseCost(manaCost){
@@ -2182,7 +2182,7 @@ function playLand(idx){
   log("Land gespielt: "+c.name);
   renderPlay();
 }
-function castSpell(idx){
+async function castSpell(idx){
   const c = game.hand[idx];
   if(!canPay(c)){ toast("Nicht genug Mana ("+costSummary(c)+" nötig) — tippe Länder für Mana an."); return; }
   const cost = parseCost(c.mana_cost);
@@ -2211,8 +2211,9 @@ function castSpell(idx){
     applyEtbEffects(game.battlefield[game.battlefield.length-1], false);
     applyEnergyTriggers(game.battlefield[game.battlefield.length-1], "etb", false);
   } else {
-    game.graveyard.push(c);
+    killCreature(c, true);
     log("Zauber: "+c.name+" →_stack→ Friedhof (Effekt manuell ausführen — Goldfisch-Modus)");
+    if(/proliferate/i.test(c.oracle||"")) await doProliferate();
   }
   renderPlay();
 }
@@ -2282,7 +2283,7 @@ async function permAction(idx){
       applyPwEffect(p, ab, false);
       log("\u2728 "+p.name+" nutzt ["+(ab.cost>0?"+":"")+ab.cost+"]: "+ab.label+" \u2014 Loyalit\u00e4t: "+p.counters+".");
       if(p.counters <= 0){
-        game.battlefield = game.battlefield.filter(x => x !== p); game.graveyard.push(p);
+        game.battlefield = game.battlefield.filter(x => x !== p); killCreature(p, true);
         log("\u2716 "+p.name+" verl\u00e4sst das Schlachtfeld (0 Loyalit\u00e4t, Regel 704.5i).");
       }
       renderPlay();
@@ -2625,6 +2626,52 @@ function removeCounters(perm, n){
   perm.pow = String((+perm.pow||0) - take);
   perm.tou = String((+perm.tou||0) - take);
 }
+/* -1/-1-Marken mit echter Spur; +1/+1 und -1/-1 annullieren sich paarweise (Regel 704.5q) */
+function addM1M1(perm, n){
+  for(let i=0;i<n;i++){
+    if((perm.counters||0) > 0){ perm.counters--; }
+    else { perm.m1m1 = (perm.m1m1||0) + 1; }
+    perm.pow = String((+perm.pow||0) - 1);
+    perm.tou = String((+perm.tou||0) - 1);
+  }
+}
+/* Zentraler Tod: Friedhof + Modular-Weitergabe (Regel 122.6k) */
+async function killCreature(perm, mine){
+  const gy = mine ? game.graveyard : game.opp.graveyard;
+  gy.push(perm);
+  if(perm.kind !== "perm") return;
+  if(mine && /\bmodular\b/i.test(perm.oracle||"") && (perm.counters||0) > 0){
+    const n = perm.counters;
+    const targets = game.battlefield.filter(x => x !== perm && x.kind === "perm" && (x.type_line||"").includes("Artifact") && (x.type_line||"").includes("Creature"));
+    if(targets.length){
+      const pick = await showActionMenu("Modular (Regel 122.6k)",
+        perm.name+" ist gestorben. Wohin wandern die +1/+1-Marke(n)?",
+        targets.map(t => ({ label: "→ "+t.name, sub: t.name+" ("+t.pow+"/"+t.tou+") erhält "+n+" Marke(n)" })));
+      if(pick !== null){ addCounters(targets[pick], n); log("🔧 Modular: "+n+" +1/+1-Marke(n) von "+perm.name+" auf "+targets[pick].name+" — jetzt "+targets[pick].pow+"/"+targets[pick].tou+"."); }
+      else log("🔧 Modular: "+n+" Marke(n) von "+perm.name+" verfallen (kein Ziel gewählt).");
+      renderPlay();
+    } else log("🔧 Modular: "+perm.name+" hatte "+n+" Marke(n), aber es gibt keine andere Artefakt-Kreatur als Ziel.");
+  }
+}
+/* Proliferate (Regel 701.27): beliebig viele Marken-Ziele, je +1 einer vorhandenen Sorte */
+async function doProliferate(){
+  const done = new Set();
+  while(true){
+    const cands = game.battlefield.filter(p => p.kind === "perm" && !done.has(p) && ((p.counters||0) > 0 || (p.m1m1||0) > 0));
+    if(!cands.length){ log("✔ Proliferate abgeschlossen: "+done.size+" Ziel(e) erhöht (Regel 701.27)."); renderPlay(); return; }
+    const buttons = cands.map(p => ({ label: "➕ "+p.name,
+      sub: "Marken: "+(p.counters||0)+(((p.m1m1||0)>0)?" · -1/-1: "+p.m1m1:"") }));
+    buttons.push({ label: "✔ Fertig", primary: true, sub: done.size+" Ziel(e) gewählt" });
+    const pick = await showActionMenu("Proliferate (Regel 701.27)",
+      "Wähle beliebig viele Ziele — jedes erhält eine weitere Marke einer Sorte, die bereits darauf ist.", buttons);
+    if(pick === null || pick === cands.length){ log("✔ Proliferate abgeschlossen: "+done.size+" Ziel(e) erhöht (Regel 701.27)."); renderPlay(); return; }
+    const t = cands[pick];
+    done.add(t);
+    if((t.m1m1||0) > 0 && !((t.counters||0) > 0)){ addM1M1(t, 1); log("➕ Proliferate: "+t.name+" erhält eine -1/-1-Marke — jetzt "+t.pow+"/"+t.tou+"."); }
+    else if((t.type_line||"").includes("Planeswalker")){ t.counters++; log("➕ Proliferate: "+t.name+" erhält eine Loyalitätsmarke — jetzt "+t.counters+"."); }
+    else { addCounters(t, 1); log("➕ Proliferate: "+t.name+" erhält eine +1/+1-Marke — jetzt "+t.pow+"/"+t.tou+"."); }
+  }
+}
 /* Effektive Werte fuer Kampfberechnung (Basis + Marken) */
 function effPow(p){ return (+p.pow||0); }
 function effTou(p){ return (+p.tou||0); }
@@ -2638,9 +2685,7 @@ function dealsWitherDamage(source){
 function applyDamageToCreature(target, dmg, source){
   if(dmg <= 0) return false;
   if(source && dealsWitherDamage(source)){
-    // -1/-1-Marken: Stärke/Härte direkt senken (+1/+1-Annullierung vereinfacht)
-    target.pow = String((+target.pow||0) - dmg);
-    target.tou = String((+target.tou||0) - dmg);
+    addM1M1(target, dmg);
     log("  \u2192 "+target.name+" erhält "+dmg+" -1/-1-Marke(n) (Wither/Infect) \u2014 jetzt "+target.pow+"/"+target.tou+".");
     return (+target.tou <= 0);
   }
@@ -2653,14 +2698,14 @@ function checkStateBasedDeaths(){
   const dead = game.battlefield.filter(p => p.kind==="perm" && (p.type_line||"").includes("Creature") && (+p.tou||0) <= 0);
   dead.forEach(p => {
     game.battlefield = game.battlefield.filter(x => x !== p);
-    game.graveyard.push(p);
+    killCreature(p, true);
     log("\u2716 "+p.name+" stirbt (0 oder weniger H\u00e4rte, Regel 704.5f).");
   });
   if(game.opp){
     const deadO = game.opp.battlefield.filter(p => p.kind==="perm" && (p.type_line||"").includes("Creature") && (+p.tou||0) <= 0);
     deadO.forEach(p => {
       game.opp.battlefield = game.opp.battlefield.filter(x => x !== p);
-      game.opp.graveyard.push(p);
+      killCreature(p, false);
       log("\U0001F916 \u2714 Gegners "+p.name+" stirbt (Regel 704.5f).");
     });
   }
@@ -2708,12 +2753,12 @@ async function oppResolveCombat(attackers){
         const d = +a.pow||0;
         if(isLethal(d, pair.blocker, a)){
           const bi = game.battlefield.indexOf(pair.blocker);
-          if(bi>=0){ game.battlefield.splice(bi,1); game.graveyard.push(pair.blocker); }
+          if(bi>=0){ game.battlefield.splice(bi,1); killCreature(pair.blocker, true); }
           log("  \u2716 Dein Blocker "+pair.blocker.name+" stirbt im Erstschlag-Schritt ("+d+" Schaden).");
           pairings.splice(pairings.indexOf(pair), 1);
           const tr = trampleDamage(a, pair.blocker);
           if(tr > 0){ fsDmg += tr; log("  \u2192 "+a.name+" Trampeln: "+tr+" Schaden an dir."); }
-        } else log("  "+a.name+" macht "+d+" Schaden auf deinen "+pair.blocker.name+" (\u00fcberlebt).");
+        } else { if(dealsWitherDamage(a)) addM1M1(pair.blocker, d); log("  "+a.name+" macht "+d+" Schaden auf deinen "+pair.blocker.name+" (\u00fcberlebt)"+(dealsWitherDamage(a)?" \u2014 als -1/-1-Marke(n)":"")+"."); }
       } else {
         fsDmg += +a.pow||0;
         log("  "+a.name+" (unblockiert, Erstschlag) macht "+(+a.pow||0)+" Schaden.");
@@ -2725,7 +2770,7 @@ async function oppResolveCombat(attackers){
       const d = +p.blocker.pow||0;
       if(isLethal(d, p.atk, p.blocker)){
         const ai = game.opp.battlefield.indexOf(p.atk);
-        if(ai>=0){ game.opp.battlefield.splice(ai,1); game.opp.graveyard.push(p.atk); }
+        if(ai>=0){ game.opp.battlefield.splice(ai,1); killCreature(p.atk, false); }
         log("  \u2714 Angreifer "+p.atk.name+" stirbt durch deinen Erstschlag-Blocker "+p.blocker.name+".");
       }
     }
@@ -2746,8 +2791,8 @@ async function oppResolveCombat(attackers){
       log("\u2694 "+pair.blocker.name+" ("+blkDmg+"/"+pair.blocker.tou+") blockt "+atk.name+" ("+atkDmg+"/"+atk.tou+").");
       let blockerDied = isLethal(atkDmg, pair.blocker, atk);
       let attackerDied = isLethal(blkDmg, atk, pair.blocker);
-      if(blockerDied){ game.battlefield = game.battlefield.filter(p => p !== pair.blocker); game.graveyard.push(pair.blocker); log("\u2716 Dein Blocker "+pair.blocker.name+" stirbt (Regel 704.5g vereinfacht)."); }
-      if(attackerDied){ const oi = game.opp.battlefield.indexOf(atk); if(oi>=0){ game.opp.battlefield.splice(oi,1); game.opp.graveyard.push(atk); } log("\u2714 Angreifer "+atk.name+" stirbt."); }
+      if(blockerDied){ game.battlefield = game.battlefield.filter(p => p !== pair.blocker); killCreature(pair.blocker, true); log("\u2716 Dein Blocker "+pair.blocker.name+" stirbt (Regel 704.5g vereinfacht)."); }
+      if(attackerDied){ const oi = game.opp.battlefield.indexOf(atk); if(oi>=0){ game.opp.battlefield.splice(oi,1); killCreature(atk, false); } log("\u2714 Angreifer "+atk.name+" stirbt."); }
       if(!blockerDied && !attackerDied) log("\u2014 Beide \u00fcberleben.");
       const tr = trampleDamage(atk, pair.blocker);
       if(tr > 0){ totalDmg += tr; log("\u2192 "+atk.name+" hat Trampeln: "+tr+" Schaden gehen an dich durch (Regel 702.19b)."); }
@@ -2854,6 +2899,7 @@ function permCardHtml(p, idx, isOpp){
     : '<div style="padding:5px 3px"><b style="font-size:11px">'+esc(p.name)+'</b>'
       + (p.pow ? '<br><span>'+p.pow+'/'+p.tou+'</span>' : (p.kind==="land" ? " (Land)" : ""))
       + (p.counters ? '<br><span>Marken: '+p.counters+'</span>' : "")
+      + (((p.m1m1||0) > 0) ? '<br><span>-1/-1: '+p.m1m1+'</span>' : "")
       + '</div>';
   const onclick = isOpp ? ' onclick="zoomCardFromData(this)"' : ' onclick="event.stopPropagation(); permZoomOrMenu('+idx+', this)"';
   return '<div class="'+(img ? "permImg" : "perm")+(p.tapped?" tapped":"")+'"'+dataAttrs+onclick+'>'+inner+'</div>';
@@ -2918,7 +2964,7 @@ async function permZoomOrMenu(idx, el){
         p.counters += ab.cost; p.pwUsed = true;
         applyPwEffect(p, ab, false);
         log("✦ "+p.name+" ["+(ab.cost>0?"+":"")+ab.cost+"]: "+ab.label+" — Loyalität: "+p.counters+".");
-        if(p.counters <= 0){ game.battlefield = game.battlefield.filter(x=>x!==p); game.graveyard.push(p); }
+        if(p.counters <= 0){ game.battlefield = game.battlefield.filter(x=>x!==p); killCreature(p, true); }
         renderPlay(); return;
       }
     }
