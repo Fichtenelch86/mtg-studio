@@ -2216,7 +2216,32 @@ async function castSpell(idx){
   } else {
     killCreature(c, true);
     log("Zauber: "+c.name+" →_stack→ Friedhof (Effekt manuell ausführen — Goldfisch-Modus)");
-    if(/proliferate/i.test(c.oracle||"")) await doProliferate();
+    const stxt = (c.oracle||"");
+    const smult = triggerMultiplier();
+    if(/create .*token/i.test(stxt)){
+      const tn = (/create two/i.test(stxt) ? 2 : /create three/i.test(stxt) ? 3 : 1) * smult;
+      for(let i=0;i<tn;i++) makeWizardToken(true, false);
+    }
+    const sd = stxt.match(/draw (?:a|one|two|three) cards?/);
+    if(sd){
+      const n = (/three/.test(sd[0]) ? 3 : /two/.test(sd[0]) ? 2 : 1) * smult;
+      for(let i=0;i<n;i++){ const cc = game.library.pop(); if(cc) game.hand.push(cc); }
+      log("⚙ "+c.name+": "+n+" Karte(n) gezogen.");
+    }
+    const sl = stxt.match(/you lose (\d+) life/i);
+    if(sl){ game.life -= +sl[1] * smult; log("⚙ "+c.name+": Du verlierst "+(+sl[1]*smult)+" Leben — jetzt "+game.life+"."); checkGameEnd(); }
+    if(/sacrifices a creature/i.test(stxt) && game.opp && game.opp.battlefield.length){
+      const creatures = game.opp.battlefield.filter(p => (p.type_line||"").includes("Creature"));
+      if(creatures.length){
+        creatures.sort((x,y) => (+x.tou||0) - (+y.tou||0));
+        const victim = creatures[0];
+        game.opp.battlefield = game.opp.battlefield.filter(p => p !== victim);
+        await killCreature(victim, false);
+        log("⚙ "+c.name+": Gegner opfert "+victim.name+".");
+      }
+    }
+    if(/proliferate/i.test(stxt)) await doProliferate();
+    if(!(c.type_line||"").includes("Creature")) wizardTokenBurn(true);
   }
   renderPlay();
 }
@@ -2272,6 +2297,7 @@ async function permAction(idx){
     const vigil = txt.includes("vigilance");
     p.tapped = !vigil; p.attacking = true;
     log("Angreifer deklariert: "+p.name+(p.pow?" \u2014 Schaden bei unblockiertem Angriff: "+p.pow:"")+(vigil?" [Wachsamheit: bleibt ungetappt]":""));
+    attackTokenTriggers([p], true);
     renderPlay(); return;
   }
   // Planeswalker-Faehigkeit (Index nach Basis-Buttons)
@@ -2429,6 +2455,46 @@ async function oppTurn(){
   renderPlay();
 }
 /* ================= Vereinfachte Trigger-Engine (ETB + Lifelink) ================= */
+/* Zauberer-Token (0/1 schwarz, Brenn-Faehigkeit) erzeugen — Final-Fantasy-Deck-Kern */
+function makeWizardToken(mine, tapped){
+  const tok = { name: "Zauberer 0/1", type_line: "Creature — Wizard Token", pow: "0", tou: "1",
+    mana_cost: "", cmc: 0, kind: "perm", tapped: !!tapped, turnPlayed: game.turn, counters: 0,
+    oracle: "Whenever you cast a noncreature spell, this token deals 1 damage to each opponent." };
+  if(mine) game.battlefield.push(tok); else if(game.opp) game.opp.battlefield.push(tok);
+  log((mine ? "\u2795" : "\U0001F916")+" Zauberer-Spielstein 0/1 erzeugt (Brenn-F\u00e4higkeit: 1 Schaden pro Nichtkreatur-Zauber).");
+  return tok;
+}
+/* ETB: "create a ... token" bei Ins-Spiel-Kommen (Mysidia Aeltereester & Co.) */
+function etbTokenCreate(perm, isOpponent, mult){
+  const o = (perm.oracle||"");
+  if(!/when .*enters?.*?create|enters?.*?create a/i.test(o)) return false;
+  const m = o.match(/create (?:a|one|two|three)?\s*(\d)\/(\d)\s*(black|white|green|blue|red)?\s*([A-Za-z]+) creature token/i)
+         || o.match(/create (?:a|one|two|three)?\s*(\d)\/(\d)/i);
+  if(!m) return false;
+  const n = (/create two/i.test(o) ? 2 : /create three/i.test(o) ? 3 : 1) * mult;
+  for(let i=0;i<n;i++) makeWizardToken(!isOpponent, /tapped/i.test(o));
+  return true;
+}
+/* Angriffs-Trigger: "Whenever/When [Name] attacks, create ..." (Queen Brahne) */
+function attackTokenTriggers(attackers, mine){
+  for(const a of attackers){
+    const o = (a.oracle||"");
+    if(/attacks?, create .*token/i.test(o)){
+      const n = (/create two/i.test(o) ? 2 : 1) * triggerMultiplier();
+      log("\u2694 "+a.name+" (Angriffs-Trigger): erzeugt "+n+" Spielstein(e).");
+      for(let i=0;i<n;i++) makeWizardToken(mine, false);
+    }
+  }
+}
+/* Zauberer-Token-Brenn-Faehigkeit: pro Nichtkreatur-Zauber 1 Schaden je Token an jeden Gegner */
+function wizardTokenBurn(mine){
+  const side = mine ? game.battlefield : (game.opp ? game.opp.battlefield : []);
+  const n = side.filter(p => p.kind === "perm" && /deals 1 damage to each opponent/i.test(p.oracle||"")).length;
+  if(!n) return 0;
+  if(mine && game.opp){ game.opp.life -= n; log("\u26a1 "+n+" Zauberer-Spielstein(e): "+n+" Schaden am Gegner — dessen Leben: "+game.opp.life+"."); checkGameEnd(); }
+  else if(!mine){ game.life -= n; log("\u26a1 \U0001F916 "+n+" Zauberer-Spielstein(e) des Gegners: "+n+" Schaden an dir — dein Leben: "+game.life+"."); checkGameEnd(); }
+  return n;
+}
 /* Trigger-Verdoppler (Harmonic Prodigy / Panharmonicon-Mechanik): jede einschlaegige
    bleibende Karte erhoeht die Ausloesungen ausgeloster Faehigkeiten um 1 (additiv, Regel 614) */
 function triggerMultiplier(){
@@ -2476,7 +2542,7 @@ function applyEtbEffects(perm, isOpponent){
   const who = isOpponent ? "\U0001F916 Gegner" : "Du";
   const mult = triggerMultiplier();
   if(mult > 1) log("\u{1F501} Trigger-Verdoppler aktiv: F\u00e4higkeiten l\u00f6sen "+mult+"x aus (Regel 614, additiv).");
-  let did = false;
+  let did = etbTokenCreate(perm, isOpponent, mult);
   // ETB: Karten ziehen
   const drawM = txt.match(/when [^.]*?enters?[^.]*?, (?:you may )?draw (?:a|one|two|three) cards?/);
   if(drawM){
