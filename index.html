@@ -272,6 +272,17 @@ mark { background: #6b5a1e; color: #ffe9a8; border-radius: 2px; }
   </div>
   <div class="grid2">
     <div class="panel">
+      <h2>🚀 Deck aus Liste erstellen</h2>
+      <p class="muted" style="font-size:12px">Kartenliste (eine pro Zeile, z.B. „4 Mysidian Elder" oder „4x Blitzschlag") einfügen — die App legt automatisch ein neues Deck an, findet alle Karten und fügt sie hinzu. Unterstützt auch MWS/Arena-Export (SB:-Zeilen werden ignoriert, Deck/Sideboard-Marker übersprungen).</p>
+      <input id="quickDeckName" placeholder="Deck-Name (optional)" style="width:100%;margin:6px 0">
+      <textarea id="quickList" style="width:100%;height:140px" placeholder="4 Mysidian Elder&#10;4 Queen Brahne&#10;2 Circle of Power&#10;24 Swamp"></textarea>
+      <div class="row" style="margin:8px 0">
+        <button class="primary" onclick="quickImport()">🔍 Karten finden & Deck anlegen</button>
+        <button onclick="navigator.clipboard.readText().then(t=>{$('quickList').value=t;toast('Eingefügt')}).catch(()=>toast('Clipboard nicht verfügbar'))">📋 Aus Zwischenablage</button>
+      </div>
+      <div id="quickStatus" style="font-size:13px"></div>
+    </div>
+    <div class="panel">
       <h2>Deckliste</h2>
       <div id="deckList" class="muted">Noch kein Deck gewählt.</div>
       <div class="row" style="margin-top:10px">
@@ -1833,6 +1844,41 @@ function addCardToDeckSilent(d, card, qty){
   const ex = d.cards.find(c=>c.name===card.name);
   if(ex) ex.qty += qty; else d.cards.push({...card, qty});
 }
+async function quickImport(){
+  const lines = $("quickList").value.split("\n").map(l=>l.trim())
+    .filter(Boolean)
+    .filter(l => !/^(SB:|Deck|Mainboard|Sideboard|Commander)/i.test(l));
+  if(!lines.length){ toast("Bitte eine Kartenliste einfügen."); return; }
+  const status = $("quickStatus");
+  status.textContent = "⏳ Suche "+lines.length+" Karten...";
+  // Neues Deck anlegen
+  const name = $("quickDeckName").value.trim() || ("Import " + new Date().toLocaleDateString());
+  const decks = allDecks();
+  const d = { id: "d"+Date.now(), name, format: "constructed", cards: [] };
+  let pending = lines.length, failed = [], found = 0;
+  for(const line of lines){
+    const m = line.match(/^(\d+)\s*[x×]?\s+(.+?)(?:\s*\(([^)]+)\))?$/) || line.match(/^(.+?)\s*[x×]\s*(\d+)$/);
+    let qty, name2;
+    if(m && m[1] && /^\d+$/.test(m[1])){ qty = +m[1]; name2 = m[2]; }
+    else { qty = 1; name2 = line; }
+    resolveCard(name2).then(card => {
+      if(card){ addCardToDeckSilent(d, card, qty); found++; }
+      else failed.push(name2);
+    }).finally(() => {
+      pending--;
+      status.textContent = "⏳ "+found+" gefunden, "+pending+" übrig...";
+      if(pending <= 0){
+        if(d.cards.length){
+          decks.push(d); saveDecks(decks); currentDeckId = d.id; loadDeckToUI();
+          status.innerHTML = "✅ <b>"+esc(d.name)+"</b> angelegt: "+d.cards.reduce((s,c)=>s+c.qty,0)+" Karten"+(failed.length ? " — <span style=\"color:#e07a6a\">nicht gefunden: "+esc(failed.join(", "))+"</span>" : "");
+          toast("Deck „"+d.name+"“ angelegt!");
+        } else {
+          status.innerHTML = "❌ Keine Karten gefunden. Bulk-Daten im 💾-Tab laden oder Internet prüfen.";
+        }
+      }
+    });
+  }
+}
 async function resolveCard(name){
   // 1) bulk DB (English or German name)
   const nl = name.toLowerCase();
@@ -1975,6 +2021,7 @@ function nextPhase(){
     log("— Zug " + game.turn + " —");
     log("Verwahrungsphase: Permanente werden enttappt.");
     game.battlefield.forEach(p=>{ p.tapped = false; p.pwUsed = false; });
+    cleanupEotBuffs();
     if(game.turn > 1){
       const c = game.library.pop();
       if(!c){ log("⚠ Bibliothek leer — nicht ziehen (Regel 104.3c: Zugversuch = Niederlage). Partie beendet."); endPlay(); return; }
@@ -2241,6 +2288,14 @@ async function castSpell(idx){
       }
     }
     if(/proliferate/i.test(stxt)) await doProliferate();
+    const buffM = stxt.match(/(wizards|creatures|[^.]{0,40}) you control get (\+\d+\/\+\d+)([^.]*?until end of turn)/i);
+    if(buffM){
+      const who = buffM[1].toLowerCase();
+      const buffTxt = buffM[2]+" "+buffM[3];
+      const rx = /wizards?/.test(who) ? /wizard/i : /creature/i;
+      log("\u2b50 "+c.name+": Buff fuer "+who+" bis Zugende.");
+      applyEotBuff(true, rx, buffTxt);
+    }
     if(!(c.type_line||"").includes("Creature")) wizardTokenBurn(true);
   }
   renderPlay();
@@ -2455,6 +2510,34 @@ async function oppTurn(){
   renderPlay();
 }
 /* ================= Vereinfachte Trigger-Engine (ETB + Lifelink) ================= */
+/* Temporaere Buffs bis Zugende (z.B. Circle of Power: Zauberer +1/+0 Lifelink) */
+function applyEotBuff(mine, regex, extra){
+  const side = mine ? game.battlefield : (game.opp ? game.opp.battlefield : []);
+  const o = extra || "";
+  for(const p of side){
+    if(p.kind !== "perm" || !(p.type_line||"").includes("Creature")) continue;
+    if(!regex.test(p.type_line||"") && !regex.test(p.oracle||"") && !regex.test(p.name||"")) continue;
+    const dpow = +((o.match(/\+(\d+)\s*\/\s*\+/i)||[])[1]||0);
+    const dtou = +((o.match(/\+\d+\s*\/\s*\+(\d+)/)||[])[1]||0);
+    game.eotBuffs = game.eotBuffs || [];
+    game.eotBuffs.push({ p, dpow, dtou, hadLifelink: /lifelink/i.test(p.oracle||""), oracleBackup: p.oracle });
+    p.pow = String((+p.pow||0) + dpow);
+    p.tou = String((+p.tou||0) + dtou);
+    if(/lifelink/i.test(o) && !/lifelink/i.test(p.oracle||"")) p.oracle = (p.oracle||"") + " Lifelink.";
+    log("\u2b50 "+p.name+" erhält +"+dpow+"/+"+dtou+( /lifelink/i.test(o) ? " und Lifelink" : "" )+" bis Zugende.");
+  }
+}
+function cleanupEotBuffs(){
+  if(!game || !game.eotBuffs) return;
+  for(const b of game.eotBuffs){
+    if(!game.battlefield.includes(b.p)) continue;  // Kreatur nicht mehr da: egal
+    b.p.pow = String((+b.p.pow||0) - b.dpow);
+    b.p.tou = String((+b.p.tou||0) - b.dtou);
+    b.p.oracle = b.oracleBackup;
+  }
+  if(game.eotBuffs.length) log("\u23f0 Bis-Zugende-Buffs enden (Regel 613.3b Cleanup).");
+  game.eotBuffs = [];
+}
 /* Zauberer-Token (0/1 schwarz, Brenn-Faehigkeit) erzeugen — Final-Fantasy-Deck-Kern */
 function makeWizardToken(mine, tapped){
   const tok = { name: "Zauberer 0/1", type_line: "Creature — Wizard Token", pow: "0", tou: "1",
