@@ -109,7 +109,7 @@ mark { background: #6b5a1e; color: #ffe9a8; border-radius: 2px; }
 .permImg .ppt { position: absolute; bottom: 5px; right: 5px; background: rgba(10,12,18,0.85); padding: 1px 5px; border-radius: 4px; font-size: 11px; font-weight: 700; }
 .permImg .ptBadge { position: absolute; top: 4px; left: 4px; background: rgba(10,12,18,0.85); padding: 1px 5px; border-radius: 4px; font-size: 10px; }
 .permImg .zoomHint { font-size: 9px; color: var(--muted); display: block; margin-top: 2px; }
-.battlefieldWrap, #oppBattlefield { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 2px; }
+.battlefieldWrap, #battlefield, #oppBattlefield { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 2px; }
 .perm.tapped { transform: rotate(2deg); opacity: .75; }
 .perm .pname { cursor: pointer; }
 .perm .psub { color: var(--muted); font-size: 11px; }
@@ -119,7 +119,7 @@ mark { background: #6b5a1e; color: #ffe9a8; border-radius: 2px; }
 .handCard { width: 108px; flex-shrink: 0; cursor: pointer; border: 1px solid var(--border); border-radius: 6px; background: var(--bg3); padding: 4px; font-size: 11px; transition: transform .1s; }
 .handCard:hover { transform: translateY(-4px); border-color: var(--accent); }
 .handCard img { width: 100%; border-radius: 4px; display: block; }
-#handRow { display: flex; gap: 6px; overflow-x: auto; padding: 10px 4px; }
+#handRow { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 4px; }
 #playStats { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
 .stat { text-align: center; }
 .stat b { display: block; font-size: 22px; color: var(--accent); }
@@ -128,7 +128,34 @@ mark { background: #6b5a1e; color: #ffe9a8; border-radius: 2px; }
 
 #progressbar { position: fixed; left: 0; top: 0; height: 3px; background: var(--accent); width: 0%; z-index: 200; transition: width .3s; }
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--bg3); border: 1px solid var(--accent); border-radius: 8px; padding: 10px 22px; z-index: 150; display: none; }
-@media (max-width: 800px) { #playArea { grid-template-columns: 1fr; } .grid2 { grid-template-columns: 1fr; } #modalBox img.cardimg { float: none; margin: 0 0 12px 0; } }
+@media (max-width: 800px) {
+  #playArea { grid-template-columns: 1fr; }
+  .grid2 { grid-template-columns: 1fr; }
+  #modalBox img.cardimg { float: none; margin: 0 0 12px 0; }
+  main { padding: 10px 8px; }
+  #topbar { padding: 8px 10px; gap: 8px; }
+  nav#tabs { padding: 0 8px; }
+  nav#tabs button { padding: 9px 10px; font-size: 14px; }
+  button { padding: 8px 12px; font-size: 13.5px; }
+  .panel { padding: 10px; }
+  .zone { padding: 8px; min-height: 60px; }
+  .handCard { width: 82px; font-size: 10px; }
+  #handRow { gap: 5px; padding: 8px 2px; }
+  .permImg { width: 62px; }
+  .permImg .zoomHint { display: none; }
+  #playStats { gap: 10px; }
+  .stat b { font-size: 18px; }
+  .stat span { font-size: 10px; }
+  #playLog { max-height: 32vh; font-size: 12px; }
+  #deckList { max-height: 55vh; }
+  .actionMenuBox { max-width: 100%; padding: 12px; }
+}
+@media (max-width: 480px) {
+  .handCard { width: 70px; }
+  .permImg { width: 54px; }
+  #playStats { gap: 8px; }
+  .stat b { font-size: 16px; }
+}
 .actionMenu { position:fixed; inset:0; background:rgba(10,12,18,0.75); display:none; align-items:center; justify-content:center; z-index:1000; padding:16px; }
 .actionMenu.open { display:flex; }
 .actionMenuBox { background:var(--bg-panel); border:1px solid var(--border); border-radius:10px; padding:16px; max-width:420px; width:100%; max-height:85vh; overflow-y:auto; }
@@ -261,6 +288,7 @@ mark { background: #6b5a1e; color: #ffe9a8; border-radius: 2px; }
     <select id="deckSelect" onchange="loadDeckToUI()"></select>
     <input id="newDeckName" placeholder="Neues Deck-Name">
     <button class="primary" onclick="createDeck()">Deck anlegen</button>
+    <input id="deckRenameInput" placeholder="Name ändern..." style="width:170px">
     <button onclick="renameDeck()">Umbenennen</button>
     <button class="danger" onclick="deleteDeck()">Löschen</button>
     <select id="deckFormat" onchange="setDeckFormat()">
@@ -1487,20 +1515,25 @@ function createDeck(){
   loadDeckToUI(); toast("Deck „"+name+"“ angelegt");
 }
 function renameDeck(){
-  const d = allDecks().find(x=>x.id===currentDeckId); if(!d) return;
-  const n = prompt("Neuer Name:", d.name); if(n){ d.name = n; saveDecks(allDecks()); loadDeckToUI(); }
+  const decks = allDecks();
+  const d = decks.find(x=>x.id===currentDeckId); if(!d){ toast("Kein Deck gewählt."); return; }
+  const n = $("deckRenameInput").value.trim();
+  if(!n){ toast("Bitte zuerst einen neuen Namen ins Feld daneben eingeben."); return; }
+  if(n === d.name) return;
+  d.name = n; saveDecks(decks); loadDeckToUI(); toast("Deck umbenannt: „"+n+"“");
 }
 function deleteDeck(){
   const d = allDecks().find(x=>x.id===currentDeckId); if(!d) return;
   if(!confirm("Deck „"+d.name+"“ wirklich löschen?")) return;
   saveDecks(allDecks().filter(x=>x.id!==currentDeckId)); currentDeckId = null; loadDeckToUI();
 }
-function setDeckFormat(){ const d = allDecks().find(x=>x.id===currentDeckId); if(d){ d.format = $("deckFormat").value; saveDecks(allDecks()); validateDeck(); } }
+function setDeckFormat(){ const decks = allDecks(); const d = decks.find(x=>x.id===currentDeckId); if(d){ d.format = $("deckFormat").value; saveDecks(decks); validateDeck(); } }
 function loadDeckToUI(){
   const selVal = $("deckSelect").value;
   if(selVal && allDecks().some(x=>x.id===selVal)) currentDeckId = selVal;
   refreshDeckSelect();
   const d = allDecks().find(x=>x.id===currentDeckId);
+  $("deckRenameInput").value = d ? d.name : "";
   if(!d){ $("deckList").innerHTML = '<span class="muted">Noch kein Deck gewählt.</span>'; $("deckStats").innerHTML = ""; return; }
   $("deckFormat").value = d.format || "constructed";
   const main = d.cards.filter(c=>!c.sideboard), side = d.cards.filter(c=>c.sideboard);
@@ -2179,7 +2212,9 @@ async function handAction(idx){
     } else infos.push("Zauber nur in einer Hauptphase (307.1) \u2014 aktuell: "+phaseName());
   }
   buttons.push({ label: "\u{1F5D1}\uFE0F Karte ablegen (Friedhof)", sub: "Bewusste Ablage (z.B. Aufr\u00e4umschritt)" });
-  const pick = await showActionMenu(c.name + "  ["+phaseName()+"]", (c.mana_cost ? c.mana_cost+" \u00b7 " : "") + (c.type_line||"") + "\n\n" + infos.join("\n"), buttons);
+  const hImg = c.img || (c.image_uris ? (c.image_uris.large || c.image_uris.normal) : "") || (c.card_faces && c.card_faces[0] && c.card_faces[0].image_uris ? c.card_faces[0].image_uris.large : "");
+  const hImgTag = hImg ? '<img src="'+hImg+'" style="width:100%;max-width:220px;border-radius:8px;display:block;margin:0 auto 8px">' : "";
+  const pick = await showActionMenu(c.name + "  ["+phaseName()+"]", (c.mana_cost ? c.mana_cost+" \u00b7 " : "") + (c.type_line||"") + "\n\n" + infos.join("\n"), buttons, hImgTag);
   if(pick === null) return;
   const act = buttons[pick];
   if(act.label.startsWith("\u274E\uFE0F Land")){ playLand(idx); toast("Land gespielt: "+c.name); }
@@ -3081,8 +3116,10 @@ function renderPlay(){
   $("oppGraveyard").textContent = game.opp ? game.opp.graveyard.map(c=>c.name).join(", ") : "";
   const pips = { W:"sym-w",U:"sym-u",B:"sym-b",R:"sym-r",G:"sym-g",C:"sym-c" };
   $("manaPips").innerHTML = game.manaPool.map(m=>'<span class="mana '+pips[m]+'">'+(m==="C"?"◇":m)+'</span>').join("");
-  $("handRow").innerHTML = game.hand.map((c,i) =>
-    '<div class="handCard" onclick="handAction('+i+')">'+(c.img?'<img loading="lazy" src="'+c.img+'">':'<div style="padding:4px"><b>'+esc(c.name)+'</b><br>'+manaHTML(c.mana_cost)+'</div>')+'</div>').join("");
+  $("handRow").innerHTML = game.hand.map((c,i) => {
+    const hImg = c.img || (c.image_uris ? c.image_uris.normal : "") || (c.card_faces && c.card_faces[0] && c.card_faces[0].image_uris ? c.card_faces[0].image_uris.normal : "");
+    return '<div class="handCard" onclick="handAction('+i+')">'+(hImg?'<img loading="lazy" src="'+hImg+'" alt="'+esc(c.name)+'">':'<div style="padding:4px"><b>'+esc(c.name)+'</b><br>'+manaHTML(c.mana_cost)+'</div>')+'</div>';
+  }).join("");
   $("battlefield").innerHTML = game.battlefield.map((p,i) => permCardHtml(p, i, false)).join("");
   $("graveyard").innerHTML = game.graveyard.map(c=>esc(c.name)).join(", ") || "—";
   $("playLog").innerHTML = game.log.map(l=>"<div>"+esc(l)+"</div>").join("");
